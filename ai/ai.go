@@ -472,7 +472,7 @@ func (b *bot) build() engine.Action {
 	have := len(b.me.Cities)
 	if b.lvl == engine.Easy {
 		limit := capacity(b.me.Plants)
-		if b.me.Money > 150 || b.g.Round > 25 {
+		if b.me.Money > 150 || b.g.Round > 18 {
 			limit += 2
 		}
 		if have >= limit || b.chance(20) {
@@ -494,7 +494,7 @@ func (b *bot) build() engine.Action {
 	if b.me.Money-opts[0].cost > 40 {
 		target = max(target, capacity(b.me.Plants))
 	}
-	if b.g.Round > 25 {
+	if b.g.Round > 18 {
 		target = 99 // the game has stalled: race to the finish
 	}
 	if have >= target || opts[0].cost > b.me.Money-5 {
