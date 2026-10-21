@@ -27,6 +27,8 @@ func (b *bot) hard() engine.Action {
 		return b.buyResources()
 	case engine.PhaseBuild:
 		return b.hardBuild()
+	case engine.PhasePower:
+		return powerAction(g, b.p)
 	}
 	return engine.Action{Type: engine.ActDone}
 }

@@ -1,5 +1,10 @@
 package engine
 
+import (
+	"errors"
+	"fmt"
+)
+
 // Resource is a fuel type traded on the resource market.
 type Resource int
 
@@ -201,79 +206,98 @@ func (c Capacity) Trim(res [NumResources]int) (kept, removed [NumResources]int) 
 
 // Powering is a choice of plants to fire in bureaucracy.
 type Powering struct {
-	Powered int               `json:"powered"`
-	Fired   []int             `json:"fired"`
-	Use     [NumResources]int `json:"use"`
+	Powered    int               `json:"powered"`
+	Fired      []int             `json:"fired"`
+	HybridCoal int               `json:"hybridCoal"` // coal burned by hybrid plants; the rest is oil
+	Use        [NumResources]int `json:"use"`
+}
+
+// PlanPowering checks that the plants in fire (all owned, no repeats) can
+// run on res, with hybrid plants burning hybridCoal coal and the rest oil,
+// and says what that powers and burns. A negative hybridCoal picks the
+// split automatically, burning from the larger pile.
+func PlanPowering(plants []int, res [NumResources]int, cities int, fire []int, hybridCoal int) (Powering, error) {
+	var need [NumResources]int
+	hybrid, capSum := 0, 0
+	seen := map[int]bool{}
+	fired := []int{}
+	for _, n := range fire {
+		if seen[n] || !containsInt(plants, n) {
+			return Powering{}, fmt.Errorf("you do not own plant %d", n)
+		}
+		seen[n] = true
+		p, _ := PlantByNum(n)
+		fired = append(fired, n)
+		capSum += p.Cities
+		switch p.Kind {
+		case KindCoal:
+			need[Coal] += p.Input
+		case KindOil:
+			need[Oil] += p.Input
+		case KindGarbage:
+			need[Garbage] += p.Input
+		case KindUranium:
+			need[Uranium] += p.Input
+		case KindHybrid:
+			hybrid += p.Input
+		}
+	}
+	if hybridCoal < 0 {
+		// Burn hybrid fuel from whichever pile is larger.
+		spareCoal, spareOil := res[Coal]-need[Coal], res[Oil]-need[Oil]
+		hybridCoal = 0
+		for h := hybrid; h > 0; h-- {
+			if spareCoal >= spareOil {
+				spareCoal--
+				hybridCoal++
+			} else {
+				spareOil--
+			}
+		}
+	}
+	if hybridCoal > hybrid {
+		return Powering{}, errors.New("hybrid plants cannot burn that much coal")
+	}
+	need[Coal] += hybridCoal
+	need[Oil] += hybrid - hybridCoal
+	for r := Resource(0); r < NumResources; r++ {
+		if need[r] > res[r] {
+			return Powering{}, fmt.Errorf("not enough %s", r)
+		}
+	}
+	return Powering{Powered: min(capSum, max(cities, 0)), Fired: fired, HybridCoal: hybridCoal, Use: need}, nil
+}
+
+func containsInt(s []int, v int) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // BestPowering picks the plants that power the most cities (capped at
 // cities), preferring the option that burns the least fuel.
 func BestPowering(plants []int, res [NumResources]int, cities int) Powering {
-	best := Powering{Powered: -1}
-	bestFuel := 0
+	best := Powering{Fired: []int{}}
+	bestFuel := -1
 	n := len(plants)
 	for mask := 0; mask < 1<<n; mask++ {
-		var need [NumResources]int
-		hybrid, capSum := 0, 0
-		var fired []int
+		var fire []int
 		for i := 0; i < n; i++ {
-			if mask&(1<<i) == 0 {
-				continue
-			}
-			p, ok := PlantByNum(plants[i])
-			if !ok {
-				continue
-			}
-			fired = append(fired, p.Num)
-			capSum += p.Cities
-			switch p.Kind {
-			case KindCoal:
-				need[Coal] += p.Input
-			case KindOil:
-				need[Oil] += p.Input
-			case KindGarbage:
-				need[Garbage] += p.Input
-			case KindUranium:
-				need[Uranium] += p.Input
-			case KindHybrid:
-				hybrid += p.Input
+			if mask&(1<<i) != 0 {
+				fire = append(fire, plants[i])
 			}
 		}
-		ok := true
-		for r := Resource(0); r < NumResources; r++ {
-			if need[r] > res[r] {
-				ok = false
-			}
-		}
-		if !ok {
+		pw, err := PlanPowering(plants, res, cities, fire, -1)
+		if err != nil {
 			continue
 		}
-		spareCoal, spareOil := res[Coal]-need[Coal], res[Oil]-need[Oil]
-		if spareCoal+spareOil < hybrid {
-			continue
+		fuel := pw.Use[Coal] + pw.Use[Oil] + pw.Use[Garbage] + pw.Use[Uranium]
+		if bestFuel < 0 || pw.Powered > best.Powered || (pw.Powered == best.Powered && fuel < bestFuel) {
+			best, bestFuel = pw, fuel
 		}
-		// Burn hybrid fuel from whichever pile is larger.
-		for h := hybrid; h > 0; h-- {
-			if spareCoal >= spareOil {
-				spareCoal--
-				need[Coal]++
-			} else {
-				spareOil--
-				need[Oil]++
-			}
-		}
-		powered := capSum
-		if powered > cities {
-			powered = cities
-		}
-		fuel := need[Coal] + need[Oil] + need[Garbage] + need[Uranium]
-		if powered > best.Powered || (powered == best.Powered && fuel < bestFuel) {
-			best = Powering{Powered: powered, Fired: fired, Use: need}
-			bestFuel = fuel
-		}
-	}
-	if best.Powered < 0 {
-		best.Powered = 0
 	}
 	return best
 }

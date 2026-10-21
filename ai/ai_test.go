@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"powergame/engine"
@@ -124,7 +125,7 @@ func TestBotsIgnoreHiddenDeck(t *testing.T) {
 			g2.Deck[i], g2.Deck[j] = g2.Deck[j], g2.Deck[i]
 		}
 		a1, a2 := Decide(g1), Decide(g2)
-		if a1 != a2 {
+		if !reflect.DeepEqual(a1, a2) {
 			t.Errorf("level %d: decision depends on hidden deck: %+v vs %+v", lvl, a1, a2)
 		}
 	}

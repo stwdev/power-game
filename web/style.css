@@ -213,3 +213,5 @@ button.plant { cursor: pointer; }
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; z-index: 20;
   max-width: calc(100% - 32px); box-shadow: 0 4px 14px rgba(0,0,0,.3); font-weight: 600;
 }
+.warn { margin: 0; color: var(--danger); font-weight: 600; }
+.small-amount { font-size: 15px; }

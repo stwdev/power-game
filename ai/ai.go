@@ -63,7 +63,17 @@ func fallback(g *engine.Game, p int) engine.Action {
 		}
 		return engine.Action{Type: engine.ActPass, Player: p}
 	}
+	if g.Phase == engine.PhasePower {
+		return powerAction(g, p)
+	}
 	return engine.Action{Type: engine.ActDone, Player: p}
+}
+
+// powerAction runs the plants that power the most cities on the least fuel.
+func powerAction(g *engine.Game, p int) engine.Action {
+	me := &g.Players[p]
+	best := engine.BestPowering(me.Plants, me.Res, len(me.Cities))
+	return engine.Action{Type: engine.ActPower, Player: p, Fire: best.Fired, HybridCoal: best.HybridCoal}
 }
 
 // clone deep-copies everything Apply mutates, with logging switched off.
@@ -132,6 +142,8 @@ func (b *bot) decide() engine.Action {
 		return b.buyResources()
 	case engine.PhaseBuild:
 		return b.build()
+	case engine.PhasePower:
+		return powerAction(g, b.p)
 	}
 	return engine.Action{Type: engine.ActDone}
 }

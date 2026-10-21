@@ -16,6 +16,7 @@ type View struct {
 	Prices     [NumResources]int `json:"prices"`
 	CanPass    bool              `json:"canPass"`
 	BuildCosts []int             `json:"buildCosts,omitempty"` // -1 when not buildable
+	Suggest    *Powering         `json:"suggest,omitempty"`    // best powering, in the power phase
 	Step2At    int               `json:"step2At"`
 	EndAt      int               `json:"endAt"`
 	MaxPlants  int               `json:"maxPlants"`
@@ -45,6 +46,11 @@ func (g *Game) View() View {
 	}
 	for r := Resource(0); r < NumResources; r++ {
 		v.Prices[r] = UnitPrice(r, g.ResMarket[r])
+	}
+	if g.Phase == PhasePower && cur >= 0 {
+		p := &g.Players[cur]
+		best := BestPowering(p.Plants, p.Res, len(p.Cities))
+		v.Suggest = &best
 	}
 	if g.Phase == PhaseBuild && v.Current >= 0 {
 		v.BuildCosts = g.BuildCosts(v.Current)
@@ -89,7 +95,7 @@ func (g *Game) Validate() error {
 		return errors.New("step or round")
 	}
 	switch g.Phase {
-	case PhaseAuction, PhaseResources, PhaseBuild, PhaseOver:
+	case PhaseAuction, PhaseResources, PhaseBuild, PhasePower, PhaseOver:
 	default:
 		return errors.New("phase")
 	}

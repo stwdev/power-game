@@ -71,8 +71,9 @@ Each round has four phases:
    prices rise as the market empties.
 3. **Build** – last player first. First house is $10; later houses cost the
    house ($10/$15/$20) plus the cheapest road from your network.
-4. **Bureaucracy** – plants burn fuel to power your cities, you get paid,
-   and the markets refill.
+4. **Power** – in turn order, choose which plants to run (or none, to
+   save fuel); hybrid plants let you pick the coal/oil mix. You're paid for
+   each city powered, then the markets refill.
 
 Step 2 opens a second house per city; step 3 (a card in the deck) a third and
 puts every plant on sale. When someone reaches the end city count, the player

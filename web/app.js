@@ -96,7 +96,7 @@ let busy = false;
 let aiTimer = null;
 let lastHuman = -1;
 let gate = false; // waiting for a pass-and-play hand-over or summary
-let ui = { tab: 'map', pick: null, bid: 0, city: null };
+let ui = { tab: 'map', pick: null, bid: 0, city: null, fire: null, hcoal: 0 };
 const prefs = Object.assign({ speed: 'normal', seats: null, count: 3 }, loadJSON(PREFS_KEY, {}));
 
 function game() { return view && view.game; }
@@ -201,7 +201,7 @@ async function resumeGame() {
 
 function enterGame(v) {
   screen('game');
-  ui = { tab: 'map', pick: null, bid: 0, city: null };
+  ui = { tab: 'map', pick: null, bid: 0, city: null, fire: null, hcoal: 0 };
   setTab('map');
   view = null;
   update(v);
@@ -226,6 +226,7 @@ async function update(v) {
   const prev = view;
   view = v;
   ui.pick = null;
+  ui.fire = null; // power phase: null means "start from the suggestion"
   ui.city = null;
   render();
   persist();
@@ -365,7 +366,7 @@ function showHelp() {
     ['2. Auction plants', 'In turn, pick a plant from the top row of the market and bid at least its number. Others raise or pass. Each player buys at most one plant per round (everyone must buy in round 1). You may own ' + (view ? view.maxPlants : 3) + ' plants.'],
     ['3. Buy fuel', 'Last player first. Each plant stores twice what it burns. Prices rise as the market empties.'],
     ['4. Build', 'Last player first. Your first house costs $10. After that you pay the house plus the cheapest road from your network. In step 1 each city holds one house, step 2 two, step 3 three.'],
-    ['5. Get paid', 'Plants burn fuel to power your cities. More powered cities = more money.'],
+    ['5. Power & get paid', 'Pick which plants to run (or none, to save fuel). Each powered city earns money; you can never power more cities than you own.'],
     ['Winning', 'When someone reaches the end city count, the player who powers the most cities that round wins.'],
   ];
   const back = view ? showMenu : closeDialog;
@@ -395,7 +396,7 @@ function render() {
   renderPanel();
 }
 
-const PHASE_NAMES = { auction: 'Auction', resources: 'Buy fuel', build: 'Build', over: 'Game over' };
+const PHASE_NAMES = { auction: 'Auction', resources: 'Buy fuel', build: 'Build', power: 'Power', over: 'Game over' };
 function renderStatus() {
   const g = game();
   const st = $('status');
@@ -513,6 +514,7 @@ function renderPanel() {
     else panelChoose(panel, p);
   } else if (g.phase === 'resources') panelResources(panel, p);
   else if (g.phase === 'build') panelBuild(panel, p);
+  else if (g.phase === 'power') panelPower(panel, p);
 }
 
 function stepper(min, max, value, onchange) {
@@ -626,6 +628,75 @@ function panelResources(panel, p) {
   panel.append(list);
   panel.append(h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => act({ type: 'done' }) }, 'Done buying')));
   panel.append(ownPlants(p));
+}
+
+// Income for powering n cities (mirrors engine.Payment).
+const PAYMENT = [10, 22, 33, 44, 54, 64, 73, 82, 90, 98, 105, 112, 118, 124, 129, 134, 138, 142, 145, 148, 150];
+const income = (n) => PAYMENT[Math.max(0, Math.min(n, PAYMENT.length - 1))];
+
+// planPower mirrors engine.PlanPowering for live feedback; the engine
+// re-checks the choice when it is sent.
+function planPower(p, fire, hybridCoal) {
+  const need = [0, 0, 0, 0];
+  let hybrid = 0;
+  let cap = 0;
+  for (const n of fire) {
+    const pl = plants[n];
+    cap += pl.cities;
+    if (pl.kind === 4) hybrid += pl.input;
+    else if (pl.kind < 4) need[pl.kind] += pl.input;
+  }
+  const hc = Math.max(0, Math.min(hybridCoal, hybrid));
+  need[0] += hc;
+  need[1] += hybrid - hc;
+  const short = RES.filter((_, k) => need[k] > p.res[k]).map((r) => r.name.toLowerCase());
+  return { need, hybrid, hc, cap, powered: Math.min(cap, p.cities.length), short };
+}
+
+function panelPower(panel, p) {
+  const sug = view.suggest || { fired: [], hybridCoal: 0 };
+  if (ui.fire === null) {
+    ui.fire = new Set(sug.fired);
+    ui.hcoal = sug.hybridCoal;
+  }
+  panel.append(h('p', { class: 'hint', text: 'Choose which plants to run. Fuel you don\'t burn stays for next round.' }));
+  if (!p.plants.length) {
+    panel.append(h('p', { class: 'muted', text: 'You have no plants to run.' }));
+  }
+  panel.append(h('div', { class: 'plants' }, p.plants.map((n) => plantCard(n, {
+    selected: ui.fire.has(n),
+    onclick: () => {
+      if (ui.fire.has(n)) ui.fire.delete(n); else ui.fire.add(n);
+      renderPanel();
+    },
+  }))));
+  const plan = planPower(p, [...ui.fire], ui.hcoal);
+  ui.hcoal = plan.hc;
+  if (plan.hybrid > 0) {
+    const label = h('span', { class: 'amount small-amount', text: plan.hc + ' 🪨 + ' + (plan.hybrid - plan.hc) + ' 🛢️' });
+    panel.append(h('div', { class: 'stepper' },
+      h('span', { class: 'muted small', text: 'Hybrid fuel' }),
+      h('button', { class: 'btn icon', type: 'button', 'aria-label': 'Less coal', disabled: plan.hc === 0, onclick: () => { ui.hcoal--; renderPanel(); } }, '−🪨'),
+      label,
+      h('button', { class: 'btn icon', type: 'button', 'aria-label': 'More coal', disabled: plan.hc === plan.hybrid, onclick: () => { ui.hcoal++; renderPanel(); } }, '+🪨')));
+  }
+  const used = RES.map((r, k) => (plan.need[k] ? r.icon + plan.need[k] : '')).filter(Boolean).join(' ');
+  const have = RES.map((r, k) => (p.res[k] ? r.icon + p.res[k] : '')).filter(Boolean).join(' ') || 'none';
+  panel.append(h('p', { class: 'small' },
+    h('strong', { text: 'Powers ' + plan.powered + ' of your ' + p.cities.length + ' cities → $' + income(plan.powered) }),
+    h('br'),
+    h('span', { class: 'muted', text: 'Burns: ' + (used || 'nothing') + ' · You have: ' + have })));
+  if (plan.short.length) panel.append(h('p', { class: 'warn', text: 'Not enough ' + plan.short.join(' and ') + ' for that choice.' }));
+  else if (!p.cities.length && ui.fire.size) panel.append(h('p', { class: 'warn', text: 'You have no cities yet, so running plants only wastes fuel.' }));
+  else if (plan.cap > p.cities.length && ui.fire.size) panel.append(h('p', { class: 'warn', text: 'These plants can power ' + plan.cap + ' cities but you only have ' + p.cities.length + ': some fuel is wasted.' }));
+  panel.append(h('div', { class: 'actions' },
+    h('button', { class: 'btn', type: 'button', onclick: () => { ui.fire = new Set(sug.fired); ui.hcoal = sug.hybridCoal; renderPanel(); } }, 'Best'),
+    h('button', { class: 'btn', type: 'button', onclick: () => { ui.fire = new Set(); renderPanel(); } }, 'None')));
+  panel.append(h('div', { class: 'actions' },
+    h('button', {
+      class: 'btn primary', type: 'button', disabled: plan.short.length > 0,
+      onclick: () => act({ type: 'power', fire: [...ui.fire], hybridCoal: plan.hc }),
+    }, ui.fire.size ? 'Run ' + ui.fire.size + ' plant' + (ui.fire.size > 1 ? 's' : '') + ' · earn $' + income(plan.powered) : 'Run nothing · earn $' + income(0))));
 }
 
 function panelBuild(panel, p) {

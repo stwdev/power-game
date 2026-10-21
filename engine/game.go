@@ -31,6 +31,7 @@ const (
 	PhaseAuction   Phase = "auction"
 	PhaseResources Phase = "resources"
 	PhaseBuild     Phase = "build"
+	PhasePower     Phase = "power"
 	PhaseOver      Phase = "over"
 )
 
@@ -435,6 +436,10 @@ func (g *Game) CurrentPlayer() int {
 		if g.Turn >= 0 && g.Turn < len(g.Order) {
 			return g.Order[len(g.Order)-1-g.Turn]
 		}
+	case PhasePower:
+		if g.Turn >= 0 && g.Turn < len(g.Order) {
+			return g.Order[g.Turn]
+		}
 	}
 	return -1
 }
@@ -468,7 +473,7 @@ func (g *Game) CanPass() bool {
 			}
 		}
 		return true
-	case PhaseResources, PhaseBuild:
+	case PhaseResources, PhaseBuild, PhasePower:
 		return true
 	}
 	return false
@@ -515,6 +520,7 @@ const (
 	ActBuy     = "buy"     // Resource, Amount
 	ActBuild   = "build"   // City
 	ActDone    = "done"    // end resource buying or building
+	ActPower   = "power"   // Fire, HybridCoal: run these plants (pass runs none)
 )
 
 // Action is one player decision.
@@ -526,6 +532,10 @@ type Action struct {
 	Resource Resource `json:"resource"`
 	Amount   int      `json:"amount,omitempty"`
 	City     int      `json:"city"`
+	// Fire lists the plants to run; HybridCoal is how much of the hybrid
+	// plants' fuel is coal (the rest is oil), or -1 to choose automatically.
+	Fire       []int `json:"fire,omitempty"`
+	HybridCoal int   `json:"hybridCoal,omitempty"`
 }
 
 // Apply validates and performs an action. On error the state is unchanged.
@@ -545,6 +555,8 @@ func (g *Game) Apply(a Action) error {
 		return g.applyResources(cur, p, a)
 	case PhaseBuild:
 		return g.applyBuild(cur, p, a)
+	case PhasePower:
+		return g.applyPower(cur, p, a)
 	}
 	return errors.New("no action possible")
 }
@@ -842,19 +854,45 @@ func (g *Game) endBuild() {
 	g.bureaucracy()
 }
 
+// bureaucracy starts the power phase: each player, in turn order, picks
+// which plants to run (bots decide instantly).
 func (g *Game) bureaucracy() {
-	for i := range g.Players {
-		p := &g.Players[i]
-		pw := BestPowering(p.Plants, p.Res, len(p.Cities))
-		for r := range pw.Use {
-			p.Res[r] -= pw.Use[r]
-			g.Supply[r] += pw.Use[r]
+	g.Phase = PhasePower
+	g.Turn = 0
+	g.logf("Powering cities.")
+}
+
+func (g *Game) applyPower(cur int, p *Player, a Action) error {
+	var pw Powering
+	switch a.Type {
+	case ActPower:
+		var err error
+		pw, err = PlanPowering(p.Plants, p.Res, len(p.Cities), a.Fire, a.HybridCoal)
+		if err != nil {
+			return err
 		}
-		p.LastPowered = pw.Powered
-		p.LastIncome = Income(pw.Powered)
-		p.Money += p.LastIncome
-		g.logf("%s powers %d cities and earns %d.", p.Name, pw.Powered, p.LastIncome)
+	case ActPass:
+		pw = Powering{Fired: []int{}}
+	default:
+		return errors.New("choose which plants to run")
 	}
+	for r := range pw.Use {
+		p.Res[r] -= pw.Use[r]
+		g.Supply[r] += pw.Use[r]
+	}
+	p.LastPowered = pw.Powered
+	p.LastIncome = Income(pw.Powered)
+	p.Money += p.LastIncome
+	g.logf("%s powers %d cities and earns %d.", p.Name, pw.Powered, p.LastIncome)
+	g.Turn++
+	if g.Turn >= len(g.Order) {
+		g.endRound()
+	}
+	return nil
+}
+
+// endRound finishes bureaucracy once everyone has been paid.
+func (g *Game) endRound() {
 	if g.EndTriggered {
 		g.finish()
 		return
