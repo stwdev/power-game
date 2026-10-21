@@ -227,6 +227,7 @@ async function update(v) {
   view = v;
   ui.pick = null;
   ui.fire = null; // power phase: null means "start from the suggestion"
+  ui.cart = null; // fuel order not yet confirmed
   ui.city = null;
   render();
   persist();
@@ -319,6 +320,47 @@ function showRoundSummary(round) {
     h('button', { class: 'btn primary wide', type: 'button', onclick: () => { gate = false; closeDialog(); schedule(); } }, 'Next round'));
 }
 
+const STEP_INFO = [
+  'Each city holds 1 house. 8 plants show in the market; the lowest 4 are for sale.',
+  'Each city holds 2 houses. The lowest plant leaves the market when step 2 begins.',
+  'Each city holds 3 houses. The market shrinks to 6 plants and all of them are for sale.',
+];
+
+function stepTriggers() {
+  return [
+    'Starts the game.',
+    'Starts when someone has ' + view.step2At + ' cities after building.',
+    'Starts when the Step 3 card is drawn from the plant deck.',
+  ];
+}
+
+function restockTable() {
+  const g = game();
+  return h('table', { class: 'summary restock' },
+    h('thead', {}, h('tr', {}, h('th', { text: 'Restock / round' }), RES.map((r) => h('th', { text: r.icon })))),
+    h('tbody', {}, view.restock.map((row, i) => h('tr', { class: i + 1 === g.step ? 'current' : '' },
+      h('td', { text: 'Step ' + (i + 1) + (i + 1 === g.step ? ' (now)' : '') }),
+      row.map((n) => h('td', { text: '+' + n }))))));
+}
+
+function stepCard() {
+  const g = game();
+  const trig = stepTriggers();
+  return h('div', { class: 'card step-card' },
+    h('div', { class: 'steps' }, [1, 2, 3].map((n) => h('div', { class: 'step' + (n === g.step ? ' now' : n < g.step ? ' done' : '') },
+      h('strong', { text: 'Step ' + n + (n === g.step ? ' · now' : '') }),
+      h('span', { class: 'small', text: STEP_INFO[n - 1] }),
+      h('span', { class: 'small muted', text: trig[n - 1] })))),
+    g.step3Pending ? h('p', { class: 'warn', text: 'The Step 3 card has been drawn: step 3 starts at the end of this phase.' }) : null,
+    restockTable(),
+    h('p', { class: 'muted small', text: 'Restock is limited by what is left in the bank. The game ends when someone reaches ' + view.endAt + ' cities.' }));
+}
+
+function showStepInfo() {
+  openDialog(h('h2', { text: 'Step ' + game().step + ' of 3' }), stepCard(),
+    h('button', { class: 'btn primary wide', type: 'button', onclick: closeDialog }, 'Close'));
+}
+
 function stepNote() {
   const g = game();
   const notes = ['Step ' + g.step + '.'];
@@ -402,7 +444,8 @@ function renderStatus() {
   const st = $('status');
   clear(st);
   append(st, [
-    h('strong', { text: 'Round ' + g.round }), ' · Step ' + g.step + ' · ' + PHASE_NAMES[g.phase],
+    h('strong', { text: 'Round ' + g.round }), ' · ' + PHASE_NAMES[g.phase] + ' ',
+    h('button', { class: 'step-pill', type: 'button', onclick: showStepInfo, 'aria-label': 'About step ' + g.step }, 'Step ' + g.step + '/3 ⓘ'),
   ]);
 }
 
@@ -451,7 +494,8 @@ function renderMarket() {
   box.append(h('p', { class: 'muted small', text: 'Deck: ' + g.deckSize + ' cards left.' + (g.step3Pending ? ' Step 3 is coming!' : '') }));
   box.append(h('h3', { text: 'Fuel market' }));
   RES.forEach((r, k) => box.append(resourceTrack(k)));
-  box.append(stepNote());
+  box.append(h('h3', { text: 'Game step' }));
+  box.append(stepCard());
 }
 
 function resourceTrack(k) {
@@ -470,7 +514,7 @@ function resourceTrack(k) {
     }
   }
   return h('div', { class: 'track' },
-    h('div', { class: 'track-head' }, RES[k].icon + ' ' + RES[k].name, h('span', { class: 'muted', text: ' ' + avail + ' left, next $' + (view.prices[k] || '—') + ' · bank ' + g.supply[k] })),
+    h('div', { class: 'track-head' }, RES[k].icon + ' ' + RES[k].name, h('span', { class: 'muted', text: ' ' + avail + ' left, next $' + (view.prices[k] || '—') + ' · restocks +' + view.restock[g.step - 1][k] + '/round · bank ' + g.supply[k] })),
     h('div', { class: 'cells' }, cells));
 }
 
@@ -608,25 +652,57 @@ function roomFor(p, k) {
   return n;
 }
 
+// unitPrice mirrors engine.UnitPrice: the cheapest unit when avail are left.
+const URANIUM_PRICES = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16];
+function unitPrice(k, avail) {
+  if (avail <= 0) return 0;
+  if (k === 3) return URANIUM_PRICES[12 - avail];
+  return Math.floor((24 - avail) / 3) + 1;
+}
+function cartCost(k, n) {
+  let cost = 0;
+  let avail = game().resMarket[k];
+  for (let i = 0; i < n; i++) cost += unitPrice(k, avail--);
+  return cost;
+}
+
+// The fuel order is only a plan until confirmed; Reset empties it. The
+// engine buys the whole order at once (or nothing) when it is confirmed.
 function panelResources(panel, p) {
   const g = game();
-  panel.append(h('p', { class: 'hint', text: 'Buy fuel for your plants. Each plant holds twice what it burns.' }));
+  if (!ui.cart) ui.cart = [0, 0, 0, 0];
+  const cart = ui.cart;
+  const total = cart.reduce((sum, n, k) => sum + cartCost(k, n), 0);
+  const store = storage(p.plants);
+  const after = p.res.map((v, k) => v + cart[k]);
+  panel.append(h('p', { class: 'hint', text: 'Add fuel to your order, then confirm. Each plant holds twice what it burns.' }));
   const list = h('div', { class: 'res-list' });
   RES.forEach((r, k) => {
-    const room = roomFor(p, k);
-    if (room === 0 && p.res[k] === 0) return;
-    const price = view.prices[k];
-    const avail = g.resMarket[k];
-    const canBuy = room > 0 && avail > 0 && price <= p.money;
-    list.append(h('div', { class: 'res-row' },
+    const more = after.slice();
+    more[k]++;
+    const fitsMore = fits(store, more);
+    if (!fitsMore && p.res[k] === 0 && cart[k] === 0) return;
+    const avail = g.resMarket[k] - cart[k];
+    const next = unitPrice(k, avail);
+    const canAdd = fitsMore && avail > 0 && total + next <= p.money;
+    list.append(h('div', { class: 'res-row cart-row' },
       h('span', { class: 'res-name', text: r.icon + ' ' + r.name }),
-      h('span', { class: 'muted small', text: 'have ' + p.res[k] + ', room ' + room }),
-      h('button', { class: 'btn primary', type: 'button', disabled: !canBuy, onclick: () => act({ type: 'buy', resource: k, amount: 1 }) },
-        avail ? 'Buy 1 · $' + price : 'Sold out')));
+      h('span', { class: 'muted small', text: 'have ' + p.res[k] + (cart[k] ? ' +' + cart[k] : '') + ' · ' + g.resMarket[k] + ' in market · restocks +' + view.restock[g.step - 1][k] }),
+      h('div', { class: 'cart-ctl' },
+        h('button', { class: 'btn icon', type: 'button', 'aria-label': 'Remove one ' + r.name, disabled: cart[k] === 0, onclick: () => { cart[k]--; renderPanel(); } }, '−'),
+        h('span', { class: 'cart-n', text: String(cart[k]) }),
+        h('button', { class: 'btn icon primary', type: 'button', 'aria-label': 'Add one ' + r.name, disabled: !canAdd, onclick: () => { cart[k]++; renderPanel(); } },
+          avail > 0 ? '+ $' + next : '—'))));
   });
   if (!list.children.length) list.append(h('p', { class: 'muted', text: 'Your plants need no fuel.' }));
   panel.append(list);
-  panel.append(h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => act({ type: 'done' }) }, 'Done buying')));
+  const items = RES.map((r, k) => (cart[k] ? r.icon + cart[k] : '')).filter(Boolean).join(' ');
+  panel.append(h('p', { class: 'small' }, h('strong', { text: 'Order: ' + (items || 'nothing') + ' · $' + total }),
+    h('span', { class: 'muted', text: ' (you have $' + p.money + ')' })));
+  panel.append(h('div', { class: 'actions' },
+    h('button', { class: 'btn', type: 'button', disabled: total === 0, onclick: () => { ui.cart = [0, 0, 0, 0]; renderPanel(); } }, 'Reset'),
+    h('button', { class: 'btn primary', type: 'button', onclick: () => act({ type: 'buyAll', amounts: cart.slice() }) },
+      total ? 'Confirm · $' + total : 'Finish without buying')));
   panel.append(ownPlants(p));
 }
 

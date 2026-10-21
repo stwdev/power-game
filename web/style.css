@@ -215,3 +215,23 @@ button.plant { cursor: pointer; }
 }
 .warn { margin: 0; color: var(--danger); font-weight: 600; }
 .small-amount { font-size: 15px; }
+
+/* fuel cart */
+.cart-row .cart-ctl { grid-area: btn; display: flex; align-items: center; gap: 6px; }
+.cart-row .cart-ctl .btn { min-width: 44px; }
+.cart-row .cart-ctl .btn.primary { min-width: 72px; }
+.cart-n { min-width: 22px; text-align: center; font-weight: 800; font-size: 17px; }
+
+/* step indicator */
+.step-pill {
+  font: inherit; font-size: 13px; font-weight: 700; color: var(--accent-ink); background: var(--accent);
+  border: 0; border-radius: 999px; padding: 3px 10px; min-height: 28px; cursor: pointer; vertical-align: 1px;
+}
+.step-card { gap: 8px; }
+.steps { display: grid; gap: 6px; }
+.step { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.step.now { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.step.done { opacity: .55; }
+.restock td, .restock th { text-align: center !important; }
+.restock td:first-child, .restock th:first-child { text-align: left !important; }
+.restock tr.current td { font-weight: 800; background: color-mix(in srgb, var(--accent) 22%, transparent); }

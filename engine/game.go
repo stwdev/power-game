@@ -521,6 +521,7 @@ const (
 	ActBuild   = "build"   // City
 	ActDone    = "done"    // end resource buying or building
 	ActPower   = "power"   // Fire, HybridCoal: run these plants (pass runs none)
+	ActBuyAll  = "buyAll"  // Amounts: buy all of these at once, then finish
 )
 
 // Action is one player decision.
@@ -536,6 +537,8 @@ type Action struct {
 	// plants' fuel is coal (the rest is oil), or -1 to choose automatically.
 	Fire       []int `json:"fire,omitempty"`
 	HybridCoal int   `json:"hybridCoal,omitempty"`
+	// Amounts is a whole fuel order for ActBuyAll, per resource.
+	Amounts [NumResources]int `json:"amounts"`
 }
 
 // Apply validates and performs an action. On error the state is unchanged.
@@ -739,16 +742,69 @@ func (g *Game) applyResources(cur int, p *Player, a Action) error {
 		g.ResMarket[a.Resource] -= a.Amount
 		g.logf("%s buys %d %s for %d.", p.Name, a.Amount, a.Resource, cost)
 		return nil
-	case ActDone, ActPass:
-		g.Turn++
-		if g.Turn >= len(g.Order) {
-			g.Phase = PhaseBuild
-			g.Turn = 0
-			g.logf("Building (last player first).")
+	case ActBuyAll:
+		cost, err := g.OrderCost(cur, a.Amounts)
+		if err != nil {
+			return err
 		}
+		p.Money -= cost
+		var bought []string
+		for r := Resource(0); r < NumResources; r++ {
+			if k := a.Amounts[r]; k > 0 {
+				p.Res[r] += k
+				g.ResMarket[r] -= k
+				bought = append(bought, fmt.Sprintf("%d %s", k, r))
+			}
+		}
+		if len(bought) > 0 {
+			g.logf("%s buys %s for %d.", p.Name, strings.Join(bought, ", "), cost)
+		}
+		g.endResourceTurn()
+		return nil
+	case ActDone, ActPass:
+		g.endResourceTurn()
 		return nil
 	}
 	return errors.New("buy resources or finish")
+}
+
+// OrderCost checks a whole fuel order for player p (market stock, storage
+// and money) and returns its price. Nothing is changed.
+func (g *Game) OrderCost(p int, amounts [NumResources]int) (int, error) {
+	if p < 0 || p >= len(g.Players) {
+		return 0, errors.New("no such player")
+	}
+	pl := &g.Players[p]
+	res := pl.Res
+	total := 0
+	for r := Resource(0); r < NumResources; r++ {
+		k := amounts[r]
+		if k < 0 || k > MarketCap(r) {
+			return 0, errors.New("bad amount")
+		}
+		cost, ok := g.ResourceCost(r, k)
+		if !ok {
+			return 0, fmt.Errorf("not enough %s in the market", r)
+		}
+		total += cost
+		res[r] += k
+	}
+	if !StorageOf(pl.Plants).Fits(res) {
+		return 0, errors.New("your plants cannot store that much")
+	}
+	if total > pl.Money {
+		return 0, errors.New("you cannot afford that")
+	}
+	return total, nil
+}
+
+func (g *Game) endResourceTurn() {
+	g.Turn++
+	if g.Turn >= len(g.Order) {
+		g.Phase = PhaseBuild
+		g.Turn = 0
+		g.logf("Building (last player first).")
+	}
 }
 
 // BuildCost is what player p pays to build in city, or an error saying

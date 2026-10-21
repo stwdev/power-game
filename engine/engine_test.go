@@ -368,3 +368,49 @@ func TestPowerLastPlayerEndsRound(t *testing.T) {
 		t.Fatalf("round %d phase %s", g.Round, g.Phase)
 	}
 }
+
+func TestBuyAllIsAtomic(t *testing.T) {
+	g := newTestGame(t, 3)
+	g.Players[0].Plants = []int{4, 7} // coal 2 (stores 4), oil 3 (stores 6)
+	g.Market = removeInt(removeInt(g.Market, 4), 7)
+	g.Phase, g.Turn, g.Order = PhaseResources, 0, []int{1, 2, 0} // last in order buys first
+	money, coal := g.Players[0].Money, g.ResMarket[Coal]
+
+	// Too much coal for storage: nothing may change.
+	if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: [NumResources]int{5, 1, 0, 0}}); err == nil {
+		t.Fatal("over-storage order accepted")
+	}
+	if g.Players[0].Money != money || g.ResMarket[Coal] != coal || g.Turn != 0 {
+		t.Fatal("rejected order changed state")
+	}
+	for _, bad := range [][NumResources]int{{-1, 0, 0, 0}, {0, 0, 0, 99}, {0, 0, 1, 0}} {
+		if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: bad}); err == nil {
+			t.Fatalf("bad order %v accepted", bad)
+		}
+	}
+
+	want, err := g.OrderCost(0, [NumResources]int{4, 3, 0, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: [NumResources]int{4, 3, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	p := g.Players[0]
+	if p.Res != [NumResources]int{4, 3, 0, 0} || p.Money != money-want || want != 1+1+1+2+3+3+3 {
+		t.Fatalf("got %+v, cost %d", p, want)
+	}
+	if g.Turn != 1 || g.CurrentPlayer() != 2 {
+		t.Fatal("confirming the order should end the turn")
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestViewShowsRestock(t *testing.T) {
+	g := newTestGame(t, 4)
+	if v := g.View(); v.Restock[1] != [NumResources]int{6, 4, 3, 2} {
+		t.Fatalf("restock %v", v.Restock)
+	}
+}
