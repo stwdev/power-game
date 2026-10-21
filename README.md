@@ -22,22 +22,43 @@ game, with its own original map (six fictional regions, 42 cities) and art.
 
 ## Install on your Android phone
 
-The app has to be served over HTTPS to install. The easiest way is free GitHub Pages:
+### Option A: Android app (APK) with Obtainium
 
-1. In the GitHub repo go to **Settings → Pages** and set **Source** to
-   **GitHub Actions**.
-2. Merge to `main`. The workflow tests, builds and publishes the game to
+Each GitHub release has a signed APK attached. In
+[Obtainium](https://github.com/ImranR98/Obtainium) tap **Add App** and paste
+`https://github.com/stwdev/power-game`. It installs the latest release and
+picks up updates automatically. Or just download the `.apk` from the
+Releases page and open it.
+
+The app plays fully offline and requests **no Android permissions** (not
+even internet access). The release notes list the signing certificate's
+SHA-256 fingerprint so you can check it.
+
+**Publishing a release (maintainers).** Do this once:
+1. Run `go run ./cmd/genkey ~/power-game-key` on a computer you trust (needs Go).
+   **Back up that folder.** Android only accepts updates signed with the same key.
+2. In GitHub go to **Settings → Secrets and variables → Actions** and add
+   `ANDROID_SIGNING_KEY` (the contents of `signing-key.b64`) and
+   `ANDROID_SIGNING_CERT` (the contents of `signing-cert.pem`).
+
+Then, for each release: **Actions → Release APK → Run workflow**, enter a
+version such as `1.0.0` (or push a tag `v1.0.0`). Use a higher version every
+time. The APK is built with the plain Android SDK tools (no Gradle) by
+`android/build.sh`.
+
+### Option B: web app (PWA)
+
+The web app has to be served over HTTPS to install. The easiest way is free GitHub Pages:
+
+1. In **Settings → General**, make sure the **default branch** is `main`.
+   GitHub Pages only deploys from the default branch.
+2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
+3. Push to `main`. The workflow tests, builds and publishes the game to
    `https://<you>.github.io/<repo>/`.
-3. Open that link in **Chrome on Android**, tap **⋮ → Add to Home screen /
-   Install app**. It then runs full screen and works offline.
+4. Open that link in **Chrome on Android** and tap **⋮ → Install app**.
 
-You can also try it locally: `./build.sh && go run ./cmd/server` and open
-<http://127.0.0.1:8080>. To test on your phone over home Wi-Fi, use
-`go run ./cmd/server -addr 0.0.0.0:8080` and browse to your computer's IP
-(it will play, but Android only installs it from HTTPS).
-
-> Want a real `.apk` for the Play Store later? The PWA can be wrapped as a
-> Trusted Web Activity with Google's Bubblewrap tool without code changes.
+You can also try it locally: run `./build.sh && go run ./cmd/server` and open
+<http://127.0.0.1:8080>.
 
 ## How to play (short version)
 
@@ -65,6 +86,8 @@ ai/          Easy/Medium heuristics, Hard Monte Carlo search
 cmd/wasm/    WebAssembly bridge used by the browser
 cmd/server/  hardened static file server (stdlib only)
 cmd/icongen/ draws the PNG app icons
+cmd/genkey/  creates the Android signing key
+android/     Android wrapper app (one Java file) and its build script
 web/         HTML/CSS/JS front end, service worker, manifest
 build.sh     builds everything into dist/
 ```

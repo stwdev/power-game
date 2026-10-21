@@ -1,6 +1,6 @@
 // Command icongen draws the PNG app icons with the standard library only:
 //
-//	go run ./cmd/icongen web
+//	go run ./cmd/icongen web android/res
 package main
 
 import (
@@ -31,6 +31,17 @@ func main() {
 	write(filepath.Join(dir, "icon-512.png"), draw(512, 1, true))
 	// Maskable icons keep the art inside the central 80% safe zone.
 	write(filepath.Join(dir, "icon-maskable-512.png"), draw(512, 0.78, false))
+	if len(os.Args) > 2 {
+		// Android launcher icons, one per screen density.
+		sizes := map[string]int{"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+		for density, size := range sizes {
+			d := filepath.Join(os.Args[2], "mipmap-"+density)
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				log.Fatal(err)
+			}
+			write(filepath.Join(d, "ic_launcher.png"), draw(size, 1, true))
+		}
+	}
 }
 
 func draw(size int, scale float64, rounded bool) *image.RGBA {

@@ -115,7 +115,9 @@ async function boot() {
   buildMap();
   wireUI();
   showSetup();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  // The Android app ships its files in the APK, so it needs no offline cache.
+  const inApp = navigator.userAgent.includes('PowerGameApp');
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !inApp) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }
