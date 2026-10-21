@@ -423,7 +423,7 @@ func (b *bot) cheapestCities() []cityCost {
 // city to our network: a low value means room to grow.
 func (b *bot) expansion(city int) int {
 	g := b.g
-	bd := engine.GetBoard()
+	bd := g.Board()
 	allowed := make([]bool, len(bd.Cities))
 	for c := range allowed {
 		allowed[c] = g.IsActive(c)

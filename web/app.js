@@ -89,7 +89,10 @@ function call(fn, arg) {
 }
 
 // ---------- state ----------
-let board = null;
+let board = null; // the current game's map
+let mapList = [];
+// The map chosen on the setup screen.
+const setupMap = { board: null, chosen: new Set() };
 let plants = {};
 let view = null;
 let busy = false;
@@ -107,12 +110,13 @@ function pname(i) { return view.game.players[i].name; }
 
 // ---------- boot ----------
 async function boot() {
-  const b = await call('board');
   const p = await call('plants');
-  if (b.error || p.error) { showFatal(b.error || p.error); return; }
-  board = b.ok;
+  const m = await call('maps');
+  if (p.error || m.error) { showFatal(p.error || m.error); return; }
   for (const pl of p.ok) plants[pl.num] = pl;
-  buildMap();
+  mapList = m.ok;
+  const sel = $('mapSel');
+  for (const info of mapList) sel.append(h('option', { value: info.id }, info.name));
   wireUI();
   showSetup();
   // The Android app ships its files in the APK, so it needs no offline cache.
@@ -139,6 +143,110 @@ function showSetup() {
   $('resume').classList.toggle('hidden', !loadJSON(SAVE_KEY, null));
   $('count').value = String(prefs.count || 3);
   renderSeats();
+  const id = mapList.some((m) => m.id === prefs.map) ? prefs.map : 'classic';
+  $('mapSel').value = id;
+  $('regionMode').value = prefs.regionMode === 'choose' ? 'choose' : 'random';
+  loadPreview(id, '');
+}
+
+// ---------- setup: map ----------
+const END_AT = { 2: 21, 3: 17, 4: 17, 5: 15, 6: 14 };
+const REGIONS_FOR = { 2: 3, 3: 3, 4: 4, 5: 5, 6: 5 };
+
+async function loadPreview(id, code) {
+  const r = await call('preview', JSON.stringify({ id, code }));
+  if (r.error) { toast(r.error); return false; }
+  setupMap.board = r.ok;
+  setupMap.chosen = new Set();
+  const info = mapList.find((m) => m.id === id);
+  $('mapDesc').textContent = info ? info.description : '';
+  const random = id === 'random';
+  $('mapCodeRow').classList.toggle('hidden', !random);
+  $('codeEntry').classList.toggle('hidden', !random);
+  $('mapCode').textContent = r.ok.code || '';
+  renderPreview();
+  return true;
+}
+
+function regionAdjacency(b) {
+  const adj = b.regionNames.map(() => b.regionNames.map(() => false));
+  for (const e of b.edges) {
+    const ra = b.cities[e.a].region;
+    const rb = b.cities[e.b].region;
+    adj[ra][rb] = adj[rb][ra] = true;
+  }
+  return adj;
+}
+
+// regionProblem mirrors engine.CheckRegions so the Start button can explain
+// what is wrong; the engine checks again when the game starts.
+function regionProblem() {
+  const n = Number($('count').value);
+  const want = REGIONS_FOR[n];
+  const chosen = [...setupMap.chosen];
+  if (chosen.length !== want) return 'Pick ' + want + ' regions for ' + n + ' players (' + chosen.length + ' picked).';
+  const adj = regionAdjacency(setupMap.board);
+  const seen = new Set([chosen[0]]);
+  const stack = [chosen[0]];
+  while (stack.length) {
+    const r = stack.pop();
+    for (const q of chosen) if (adj[r][q] && !seen.has(q)) { seen.add(q); stack.push(q); }
+  }
+  if (seen.size !== want) return 'The regions you pick must touch each other.';
+  const cities = setupMap.board.cities.filter((c) => setupMap.chosen.has(c.region)).length;
+  if (cities < END_AT[n]) return 'Those regions have ' + cities + ' cities; the game needs ' + END_AT[n] + '.';
+  return '';
+}
+
+function choosing() { return $('regionMode').value === 'choose'; }
+
+function toggleRegion(r) {
+  if (!choosing()) return;
+  if (setupMap.chosen.has(r)) setupMap.chosen.delete(r); else setupMap.chosen.add(r);
+  renderPreview();
+}
+
+function renderPreview() {
+  const b = setupMap.board;
+  if (!b) return;
+  const svg = $('preview');
+  clear(svg);
+  svg.setAttribute('viewBox', '0 0 ' + b.width + ' ' + b.height);
+  const pick = choosing();
+  b.regionNames.forEach((name, r) => {
+    const on = !pick || setupMap.chosen.has(r);
+    const g = s('g', { class: 'pv-region' + (on ? '' : ' off'), 'data-region': r });
+    const pts = b.cities.filter((c) => c.region === r);
+    for (const c of pts) g.append(s('circle', { cx: c.x, cy: c.y, r: 66, fill: REGION_TINT[r] }));
+    svg.append(g);
+  });
+  for (const e of b.edges) {
+    const a = b.cities[e.a];
+    const c = b.cities[e.b];
+    svg.append(s('line', { class: 'pv-road', x1: a.x, y1: a.y, x2: c.x, y2: c.y }));
+  }
+  for (const c of b.cities) svg.append(s('circle', { class: 'pv-city', cx: c.x, cy: c.y, r: 11, 'data-region': c.region }));
+  b.regionNames.forEach((name, r) => {
+    const pts = b.cities.filter((c) => c.region === r);
+    const cx = pts.reduce((a, c) => a + c.x, 0) / pts.length;
+    const cy = pts.reduce((a, c) => a + c.y, 0) / pts.length;
+    svg.append(s('text', { class: 'pv-name', x: cx, y: cy + 8, 'text-anchor': 'middle', 'data-region': r }, name));
+  });
+  const chips = $('regionChips');
+  clear(chips);
+  if (pick) {
+    b.regionNames.forEach((name, r) => {
+      const cities = b.cities.filter((c) => c.region === r).length;
+      const chip = h('button', { class: 'chip-btn' + (setupMap.chosen.has(r) ? ' on' : ''), type: 'button', 'aria-pressed': setupMap.chosen.has(r) ? 'true' : 'false', onclick: () => toggleRegion(r) },
+        h('span', { class: 'dot', 'data-tint': r }), ' ' + name + ' · ' + cities + ' cities');
+      chips.append(chip);
+    });
+    for (const d of chips.querySelectorAll('[data-tint]')) d.style.background = REGION_TINT[Number(d.dataset.tint)];
+  }
+  const problem = pick ? regionProblem() : '';
+  $('regionHint').textContent = pick ? (problem || 'Ready: tap a region to change it.') : 'Regions are picked at random when the game starts.';
+  $('regionHint').classList.toggle('warn', !!problem);
+  $('start').disabled = !!problem;
 }
 
 function defaultSeats() {
@@ -178,8 +286,16 @@ async function startGame() {
   seats.forEach((st, i) => { all[i] = st; });
   prefs.seats = all;
   prefs.count = seats.length;
+  prefs.map = $('mapSel').value;
+  prefs.regionMode = $('regionMode').value;
   storeJSON(PREFS_KEY, prefs);
-  const r = await call('newGame', JSON.stringify({ players: seats }));
+  const b = setupMap.board;
+  const cfg = {
+    players: seats,
+    map: { id: b.id, seed: b.seed || 0 },
+    regions: choosing() ? [...setupMap.chosen] : [],
+  };
+  const r = await call('newGame', JSON.stringify(cfg));
   if (r.error) { toast(r.error); return; }
   lastHuman = -1;
   enterGame(r.ok);
@@ -199,7 +315,11 @@ async function resumeGame() {
   enterGame(r.ok);
 }
 
-function enterGame(v) {
+async function enterGame(v) {
+  const b = await call('board');
+  if (b.error) { toast(b.error); showSetup(); return; }
+  board = b.ok;
+  buildMap();
   screen('game');
   ui = { tab: 'map', pick: null, bid: 0, city: null, fire: null, hcoal: 0 };
   setTab('map');
@@ -391,6 +511,7 @@ function showMenu() {
     Object.keys(SPEEDS).map((k) => h('option', { value: k, selected: prefs.speed === k }, k[0].toUpperCase() + k.slice(1))));
   openDialog(
     h('h2', { text: 'Menu' }),
+    h('p', { class: 'muted small', text: 'Map: ' + board.name + (board.code ? ' · code ' + board.code : '') }),
     h('label', { class: 'row' }, 'Bot speed', speedSel),
     h('button', { class: 'btn wide', type: 'button', onclick: showHelp }, 'How to play'),
     h('button', { class: 'btn wide danger', type: 'button', onclick: () => {
@@ -810,6 +931,8 @@ const vb = { x: 0, y: 0, w: 640, h: 940 };
 function buildMap() {
   const svg = $('map');
   clear(svg);
+  mapRefs.cities = [];
+  mapRefs.regions = [];
   const regionLayer = s('g', { class: 'regions' });
   board.regionNames.forEach((name, r) => {
     const g = s('g', { class: 'region' });
@@ -848,7 +971,6 @@ function buildMap() {
     mapRefs.cities[i] = { g, slots, cost };
   });
   svg.append(cityLayer);
-  wireMapGestures(svg);
   setViewBox();
 }
 
@@ -1002,6 +1124,18 @@ function wireUI() {
   $('zoomIn').addEventListener('click', () => { const c = center(); zoomAt(1 / 1.3, c.x, c.y); });
   $('zoomOut').addEventListener('click', () => { const c = center(); zoomAt(1.3, c.x, c.y); });
   $('zoomFit').addEventListener('click', fitMap);
+  wireMapGestures($('map'));
+  $('mapSel').addEventListener('change', () => loadPreview($('mapSel').value, ''));
+  $('newMap').addEventListener('click', () => loadPreview('random', ''));
+  $('useCode').addEventListener('click', async () => {
+    if (await loadPreview('random', $('codeInput').value.trim())) $('codeInput').value = '';
+  });
+  $('regionMode').addEventListener('change', () => { setupMap.chosen = new Set(); renderPreview(); });
+  $('count').addEventListener('change', renderPreview);
+  $('preview').addEventListener('click', (e) => {
+    const el = e.target.closest && e.target.closest('[data-region]');
+    if (el) toggleRegion(Number(el.dataset.region));
+  });
 }
 
 function mergeSeats() {

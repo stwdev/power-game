@@ -83,6 +83,14 @@ func (g *Game) Validate() error {
 	if n < MinPlayers || n > MaxPlayers {
 		return errors.New("player count")
 	}
+	b, err := BuildBoard(g.Map)
+	if err != nil {
+		return err
+	}
+	if g.Map.ID == "" {
+		g.Map.ID = "classic"
+	}
+	g.board = b
 	if len(g.Order) != n || len(g.Bought) != n || len(g.Passed) != n {
 		return errors.New("table size")
 	}
@@ -104,14 +112,14 @@ func (g *Game) Validate() error {
 	if g.Turn < 0 || g.Turn > n {
 		return errors.New("turn")
 	}
-	if len(g.Owners) != len(board.Cities) {
+	if len(g.Owners) != len(g.Board().Cities) {
 		return errors.New("owners")
 	}
-	if len(g.Regions) < 1 || len(g.Regions) > len(board.RegionNames) {
+	if len(g.Regions) < 1 || len(g.Regions) > len(g.Board().RegionNames) {
 		return errors.New("regions")
 	}
 	for _, r := range g.Regions {
-		if r < 0 || r >= len(board.RegionNames) {
+		if r < 0 || r >= len(g.Board().RegionNames) {
 			return errors.New("region")
 		}
 	}
@@ -180,7 +188,7 @@ func (g *Game) Validate() error {
 		}
 		citySeen := map[int]bool{}
 		for _, c := range p.Cities {
-			if c < 0 || c >= len(board.Cities) || citySeen[c] || !contains(g.Owners[c], i) {
+			if c < 0 || c >= len(g.Board().Cities) || citySeen[c] || !contains(g.Owners[c], i) {
 				return errors.New("cities")
 			}
 			citySeen[c] = true

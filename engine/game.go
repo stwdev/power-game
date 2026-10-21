@@ -93,10 +93,24 @@ type Game struct {
 	Ranking      []int             `json:"ranking,omitempty"`
 	Log          []string          `json:"log"`
 	RNG          RNG               `json:"rng"`
+	Map          MapSpec           `json:"map"`
 
 	// Quiet skips logging; AI simulations use it for speed.
 	Quiet  bool `json:"-"`
+	board  *Board
 	active []bool
+}
+
+// Board is the map this game is played on.
+func (g *Game) Board() *Board {
+	if g.board == nil {
+		b, err := BuildBoard(g.Map)
+		if err != nil {
+			b = classicBoard() // unreachable for validated games
+		}
+		g.board = b
+	}
+	return g.board
 }
 
 // PlayerConfig describes a seat when starting a game.
@@ -109,6 +123,9 @@ type PlayerConfig struct {
 type Config struct {
 	Players []PlayerConfig `json:"players"`
 	Seed    uint64         `json:"seed"`
+	Map     MapSpec        `json:"map"`
+	// Regions optionally picks the regions in play; empty picks at random.
+	Regions []int `json:"regions"`
 }
 
 // CleanName strips control characters and limits length. Names are shown
@@ -139,7 +156,17 @@ func NewGame(cfg Config) (*Game, error) {
 	if n < MinPlayers || n > MaxPlayers {
 		return nil, fmt.Errorf("need %d-%d players", MinPlayers, MaxPlayers)
 	}
-	g := &Game{RNG: RNG{State: cfg.Seed}, Round: 1, Step: 1, DiscardFor: -1, JustBought: -1}
+	b, err := BuildBoard(cfg.Map)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Map.ID != "random" {
+		cfg.Map.Seed = 0
+	}
+	if cfg.Map.ID == "" {
+		cfg.Map.ID = "classic"
+	}
+	g := &Game{RNG: RNG{State: cfg.Seed}, Round: 1, Step: 1, DiscardFor: -1, JustBought: -1, Map: cfg.Map, board: b}
 	for i, pc := range cfg.Players {
 		if pc.AI < Human || pc.AI > Hard {
 			return nil, errors.New("bad AI level")
@@ -152,7 +179,15 @@ func NewGame(cfg Config) (*Game, error) {
 			Cities: []int{},
 		})
 	}
-	g.Regions = g.pickRegions(regionsFor(n))
+	if len(cfg.Regions) > 0 {
+		if err := CheckRegions(b, cfg.Regions, n); err != nil {
+			return nil, err
+		}
+		g.Regions = append([]int(nil), cfg.Regions...)
+		sort.Ints(g.Regions)
+	} else {
+		g.Regions = g.pickRegions(regionsFor(n))
+	}
 	g.computeActive()
 
 	// Plants 3-10 start in the market; 13 goes on top of the deck and the
@@ -184,7 +219,7 @@ func NewGame(cfg Config) (*Game, error) {
 		g.Supply[r] = totalPieces[r] - startMarket[r]
 	}
 	g.Removed = []int{}
-	g.Owners = make([][]int, len(board.Cities))
+	g.Owners = make([][]int, len(g.Board().Cities))
 	for i := range g.Owners {
 		g.Owners[i] = []int{}
 	}
@@ -198,6 +233,51 @@ func NewGame(cfg Config) (*Game, error) {
 	return g, nil
 }
 
+// CheckRegions reports whether regions is a valid choice for n players on
+// board b: the right number of distinct regions, all connected by road.
+func CheckRegions(b *Board, regions []int, n int) error {
+	want := RegionsFor(n)
+	if len(regions) != want {
+		return fmt.Errorf("choose %d regions for %d players", want, n)
+	}
+	in := make([]bool, len(b.RegionNames))
+	for _, r := range regions {
+		if r < 0 || r >= len(in) || in[r] {
+			return errors.New("bad region choice")
+		}
+		in[r] = true
+	}
+	adj := b.RegionAdjacency()
+	seen := map[int]bool{regions[0]: true}
+	stack := []int{regions[0]}
+	for len(stack) > 0 {
+		r := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for q := range in {
+			if in[q] && adj[r][q] && !seen[q] {
+				seen[q] = true
+				stack = append(stack, q)
+			}
+		}
+	}
+	if len(seen) != want {
+		return errors.New("the regions you pick must touch each other")
+	}
+	cities := 0
+	for _, c := range b.Cities {
+		if in[c.Region] {
+			cities++
+		}
+	}
+	if end := endTriggerFor(n); cities < end {
+		return fmt.Errorf("those regions have %d cities, but the game needs %d to finish", cities, end)
+	}
+	return nil
+}
+
+// RegionsFor is how many regions are played with n players.
+func RegionsFor(n int) int { return regionsFor(n) }
+
 func regionsFor(n int) int {
 	switch {
 	case n <= 3:
@@ -210,9 +290,22 @@ func regionsFor(n int) int {
 }
 
 // pickRegions grows a random connected set of k regions.
+// pickRegions picks a random connected set of k regions holding enough
+// cities for someone to reach the end of the game.
 func (g *Game) pickRegions(k int) []int {
-	adj := board.RegionAdjacency()
-	total := len(board.RegionNames)
+	var picked []int
+	for try := 0; try < 100; try++ {
+		picked = g.growRegions(k)
+		if CheckRegions(g.Board(), picked, len(g.Players)) == nil {
+			break
+		}
+	}
+	return picked
+}
+
+func (g *Game) growRegions(k int) []int {
+	adj := g.Board().RegionAdjacency()
+	total := len(g.Board().RegionNames)
 	in := make([]bool, total)
 	start := g.RNG.Intn(total)
 	in[start] = true
@@ -242,8 +335,8 @@ func (g *Game) pickRegions(k int) []int {
 }
 
 func (g *Game) computeActive() {
-	g.active = make([]bool, len(board.Cities))
-	for i, c := range board.Cities {
+	g.active = make([]bool, len(g.Board().Cities))
+	for i, c := range g.Board().Cities {
 		for _, r := range g.Regions {
 			if c.Region == r {
 				g.active[i] = true
@@ -263,7 +356,7 @@ func (g *Game) IsActive(city int) bool {
 func (g *Game) regionList() string {
 	var names []string
 	for _, r := range g.Regions {
-		names = append(names, board.RegionNames[r])
+		names = append(names, g.Board().RegionNames[r])
 	}
 	return strings.Join(names, ", ")
 }
@@ -299,8 +392,10 @@ func (g *Game) Step2Trigger() int {
 }
 
 // EndTrigger is the city count that ends the game.
-func (g *Game) EndTrigger() int {
-	switch len(g.Players) {
+func (g *Game) EndTrigger() int { return endTriggerFor(len(g.Players)) }
+
+func endTriggerFor(players int) int {
+	switch players {
 	case 2:
 		return 21
 	case 3, 4:
@@ -813,7 +908,7 @@ func (g *Game) BuildCost(p, city int) (int, error) {
 	if p < 0 || p >= len(g.Players) {
 		return 0, errors.New("no such player")
 	}
-	if city < 0 || city >= len(board.Cities) || !g.IsActive(city) {
+	if city < 0 || city >= len(g.Board().Cities) || !g.IsActive(city) {
 		return 0, errors.New("that city is not in play")
 	}
 	if contains(g.Owners[city], p) {
@@ -825,7 +920,7 @@ func (g *Game) BuildCost(p, city int) (int, error) {
 	}
 	cost := SlotCost[used]
 	if pl := &g.Players[p]; len(pl.Cities) > 0 {
-		d := board.Distances(pl.Cities, g.active)[city]
+		d := g.Board().Distances(pl.Cities, g.active)[city]
 		if d == math.MaxInt {
 			return 0, errors.New("no road to that city")
 		}
@@ -837,7 +932,7 @@ func (g *Game) BuildCost(p, city int) (int, error) {
 // BuildCosts is BuildCost for every city at once (-1 where p cannot
 // build), computing the road network distances only once.
 func (g *Game) BuildCosts(p int) []int {
-	out := make([]int, len(board.Cities))
+	out := make([]int, len(g.Board().Cities))
 	if p < 0 || p >= len(g.Players) {
 		for i := range out {
 			out[i] = -1
@@ -849,7 +944,7 @@ func (g *Game) BuildCosts(p int) []int {
 	}
 	var dist []int
 	if pl := &g.Players[p]; len(pl.Cities) > 0 {
-		dist = board.Distances(pl.Cities, g.active)
+		dist = g.Board().Distances(pl.Cities, g.active)
 	}
 	for c := range out {
 		used := len(g.Owners[c])
@@ -883,7 +978,7 @@ func (g *Game) applyBuild(cur int, p *Player, a Action) error {
 		p.Money -= cost
 		p.Cities = append(p.Cities, a.City)
 		g.Owners[a.City] = append(g.Owners[a.City], cur)
-		g.logf("%s builds in %s for %d.", p.Name, board.Cities[a.City].Name, cost)
+		g.logf("%s builds in %s for %d.", p.Name, g.Board().Cities[a.City].Name, cost)
 		g.cleanMarket()
 		return nil
 	case ActDone, ActPass:

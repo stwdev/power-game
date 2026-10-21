@@ -20,7 +20,7 @@ func newTestGame(t *testing.T, n int) *Game {
 }
 
 func TestBoardIsConnected(t *testing.T) {
-	b := GetBoard()
+	b := classicBoard()
 	all := make([]bool, len(b.Cities))
 	for i := range all {
 		all[i] = true
@@ -146,7 +146,7 @@ func TestBuildCostsMatchBuildCost(t *testing.T) {
 	g.Phase, g.Turn = PhaseBuild, 0
 	p := g.CurrentPlayer()
 	var first int
-	for c := range board.Cities {
+	for c := range g.Board().Cities {
 		if g.IsActive(c) {
 			first = c
 			break
@@ -156,7 +156,7 @@ func TestBuildCostsMatchBuildCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	costs := g.BuildCosts(p)
-	for c := range board.Cities {
+	for c := range g.Board().Cities {
 		want, err := g.BuildCost(p, c)
 		if err != nil {
 			want = -1
@@ -228,7 +228,7 @@ func TestCleanName(t *testing.T) {
 }
 
 func TestRegionsAreConnected(t *testing.T) {
-	adj := board.RegionAdjacency()
+	adj := classicBoard().RegionAdjacency()
 	for seed := uint64(0); seed < 50; seed++ {
 		for n := 2; n <= 6; n++ {
 			cfg := Config{Seed: seed}

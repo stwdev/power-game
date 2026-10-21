@@ -235,3 +235,22 @@ button.plant { cursor: pointer; }
 .restock td, .restock th { text-align: center !important; }
 .restock td:first-child, .restock th:first-child { text-align: left !important; }
 .restock tr.current td { font-weight: 800; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* setup: map preview and region choice */
+#preview { width: 100%; height: 300px; display: block; background: var(--map-bg); border-radius: 12px; cursor: pointer; }
+.pv-region circle { opacity: .5; }
+.pv-region.off circle { opacity: .1; }
+.pv-road { stroke: var(--road); stroke-width: 3; }
+.pv-city { fill: var(--city); stroke: var(--road); stroke-width: 2; }
+.pv-name { font-size: 26px; font-weight: 800; fill: var(--ink); paint-order: stroke; stroke: var(--map-bg); stroke-width: 6px; }
+.code-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.code-row strong { font-family: ui-monospace, monospace; font-size: 17px; letter-spacing: 1px; }
+.code-row input { flex: 1; min-width: 0; text-transform: uppercase; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 10px; min-height: 36px; cursor: pointer;
+}
+.chip-btn.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; font-weight: 700; }
+#regionHint.warn { color: var(--danger); font-weight: 600; }
+.btn.primary:disabled { opacity: .45; }

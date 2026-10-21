@@ -7,6 +7,11 @@ game, with its own original map (six fictional regions, 42 cities) and art.
 
 - **Plays on Android** as an installable, offline-capable web app (PWA).
 - **2–6 players:** any mix of humans (pass-and-play on one phone) and bots.
+- **Changeable board:** play the Classic map, the Lakeside ring or the
+  Ridge zig-zag, or generate a **random map** every game. Each random map
+  has a short code (like `K3F9-2QXA`) you can share to replay it. You can
+  also let the game pick the regions in play, or choose them yourself on
+  the setup screen.
 - **Three AI levels**
   - **Easy** – plays loosely and makes mistakes. Good for learning.
   - **Medium** – solid heuristics: values plants by income and fuel cost,
