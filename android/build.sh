@@ -20,8 +20,10 @@ PATCH=$(echo "$VERSION.0.0" | cut -d. -f3)
 CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
 
 : "${ANDROID_HOME:?set ANDROID_HOME to the Android SDK}"
-BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -n 1)
+# Newest stable versions only: skip betas, release candidates and previews.
+BT=$(ls -d "$ANDROID_HOME"/build-tools/* | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-* | grep -E '/android-[0-9]+$' | sort -V | tail -n 1)
+[ -n "$BT" ] && [ -n "$PLATFORM" ] || { echo "no stable Android build-tools/platform found" >&2; exit 1; }
 JAR="$PLATFORM/android.jar"
 echo "build-tools: $BT"
 echo "platform:    $PLATFORM"
