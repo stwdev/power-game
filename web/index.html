@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#14181f">
+<meta name="description" content="Build power plants, buy fuel and wire up cities. Play offline against three levels of AI.">
+<title>Power Game</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<div id="loading" class="screen center">
+  <div class="logo">⚡</div>
+  <p>Loading…</p>
+</div>
+
+<section id="setup" class="screen hidden">
+  <header class="setup-head">
+    <div class="logo">⚡</div>
+    <h1>Power Game</h1>
+    <p class="muted">Buy plants, burn fuel, wire up cities.</p>
+  </header>
+  <button id="resume" class="btn primary wide hidden" type="button">Continue saved game</button>
+  <div class="card">
+    <label class="row">Players
+      <select id="count">
+        <option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option>
+      </select>
+    </label>
+    <div id="seats"></div>
+    <p class="muted small">Several humans can share one phone (pass-and-play). Online play is planned.</p>
+  </div>
+  <button id="start" class="btn primary wide" type="button">Start game</button>
+  <button id="howto" class="btn wide" type="button">How to play</button>
+</section>
+
+<section id="game" class="screen hidden">
+  <header id="topbar">
+    <div id="status"></div>
+    <button id="menuBtn" class="btn icon" type="button" aria-label="Menu">☰</button>
+  </header>
+  <div id="players"></div>
+  <nav id="tabs">
+    <button type="button" data-tab="map" class="tab active">Map</button>
+    <button type="button" data-tab="market" class="tab">Market</button>
+    <button type="button" data-tab="log" class="tab">Log</button>
+  </nav>
+  <main id="main">
+    <div id="mapView" class="view">
+      <svg id="map" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Map"></svg>
+      <div class="zoom">
+        <button id="zoomIn" class="btn icon" type="button" aria-label="Zoom in">+</button>
+        <button id="zoomOut" class="btn icon" type="button" aria-label="Zoom out">−</button>
+        <button id="zoomFit" class="btn icon" type="button" aria-label="Fit map">⤢</button>
+      </div>
+    </div>
+    <div id="marketView" class="view hidden"></div>
+    <div id="logView" class="view hidden"></div>
+  </main>
+  <section id="panel"></section>
+</section>
+
+<div id="overlay" class="overlay hidden"><div id="dialog" class="dialog"></div></div>
+<div id="toast" class="toast hidden"></div>
+</body>
+</html>
