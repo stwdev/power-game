@@ -94,6 +94,8 @@ type Game struct {
 	Log          []string          `json:"log"`
 	RNG          RNG               `json:"rng"`
 	Map          MapSpec           `json:"map"`
+	// CustomRestock replaces the standard fuel restock table when set.
+	CustomRestock *RestockTable `json:"customRestock,omitempty"`
 
 	// Quiet skips logging; AI simulations use it for speed.
 	Quiet  bool `json:"-"`
@@ -126,6 +128,38 @@ type Config struct {
 	Map     MapSpec        `json:"map"`
 	// Regions optionally picks the regions in play; empty picks at random.
 	Regions []int `json:"regions"`
+	// Restock optionally replaces the standard fuel restock table.
+	Restock *RestockTable `json:"restock,omitempty"`
+}
+
+// RestockTable is how many units of each fuel return to the market at the
+// end of every round, for steps 1, 2 and 3.
+type RestockTable [3][NumResources]int
+
+// DefaultRestock is the standard restock table for n players.
+func DefaultRestock(n int) RestockTable {
+	n = max(MinPlayers, min(MaxPlayers, n))
+	return resupply[n]
+}
+
+// Check reports whether every rate is between 0 and the market's size.
+func (t RestockTable) Check() error {
+	for _, row := range t {
+		for r, v := range row {
+			if v < 0 || v > MarketCap(Resource(r)) {
+				return fmt.Errorf("%s restock must be 0-%d", Resource(r), MarketCap(Resource(r)))
+			}
+		}
+	}
+	return nil
+}
+
+// Restock is the restock table this game uses.
+func (g *Game) Restock() RestockTable {
+	if g.CustomRestock != nil {
+		return *g.CustomRestock
+	}
+	return DefaultRestock(len(g.Players))
 }
 
 // CleanName strips control characters and limits length. Names are shown
@@ -167,6 +201,15 @@ func NewGame(cfg Config) (*Game, error) {
 		cfg.Map.ID = "classic"
 	}
 	g := &Game{RNG: RNG{State: cfg.Seed}, Round: 1, Step: 1, DiscardFor: -1, JustBought: -1, Map: cfg.Map, board: b}
+	if cfg.Restock != nil {
+		if err := cfg.Restock.Check(); err != nil {
+			return nil, err
+		}
+		if *cfg.Restock != DefaultRestock(n) {
+			t := *cfg.Restock
+			g.CustomRestock = &t
+		}
+	}
 	for i, pc := range cfg.Players {
 		if pc.AI < Human || pc.AI > Hard {
 			return nil, errors.New("bad AI level")
@@ -1048,7 +1091,7 @@ func (g *Game) endRound() {
 		g.finish()
 		return
 	}
-	table := resupply[len(g.Players)][g.Step-1]
+	table := g.Restock()[g.Step-1]
 	for r := Resource(0); r < NumResources; r++ {
 		add := min(table[r], g.Supply[r], marketCap[r]-g.ResMarket[r])
 		g.ResMarket[r] += add

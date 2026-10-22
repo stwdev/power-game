@@ -414,3 +414,57 @@ func TestViewShowsRestock(t *testing.T) {
 		t.Fatalf("restock %v", v.Restock)
 	}
 }
+
+func TestCustomRestock(t *testing.T) {
+	cfg := Config{Seed: 1, Players: []PlayerConfig{{}, {}, {}}}
+	custom := RestockTable{{7, 0, 2, 3}, {1, 1, 1, 1}, {0, 0, 0, 0}}
+	cfg.Restock = &custom
+	g, err := NewGame(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Restock() != custom || !g.View().Custom {
+		t.Fatal("custom table not used")
+	}
+	// Skip to the power phase with everyone powering nothing.
+	g.ResMarket = [NumResources]int{10, 10, 10, 5}
+	for r := range g.Supply {
+		g.Supply[r] = totalPieces[r] - g.ResMarket[r]
+	}
+	before := g.ResMarket
+	g.Phase, g.Turn = PhasePower, 0
+	for i := 0; i < 3; i++ {
+		if err := g.Apply(Action{Type: ActPass, Player: g.CurrentPlayer()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := [NumResources]int{before[0] + 7, before[1], before[2] + 2, before[3] + 3}
+	if g.ResMarket != want {
+		t.Fatalf("market %v, want %v", g.ResMarket, want)
+	}
+
+	// The standard table is stored as "no custom table".
+	std := DefaultRestock(3)
+	cfg.Restock = &std
+	if g, _ := NewGame(cfg); g.CustomRestock != nil || g.View().Custom {
+		t.Error("standard table should not count as custom")
+	}
+	for _, bad := range []RestockTable{{{-1, 0, 0, 0}}, {{25, 0, 0, 0}}, {{0, 0, 0, 13}}} {
+		cfg.Restock = &bad
+		if _, err := NewGame(cfg); err == nil {
+			t.Errorf("restock %v accepted", bad)
+		}
+	}
+}
+
+func TestLoadRejectsBadRestock(t *testing.T) {
+	cfg := Config{Seed: 1, Players: []PlayerConfig{{}, {}}}
+	custom := RestockTable{{1, 1, 1, 1}}
+	cfg.Restock = &custom
+	g, _ := NewGame(cfg)
+	g.CustomRestock[0][Uranium] = 99
+	data, _ := json.Marshal(g)
+	if _, err := Load(data); err == nil {
+		t.Error("save with bad restock accepted")
+	}
+}

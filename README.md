@@ -12,6 +12,8 @@ game, with its own original map (six fictional regions, 42 cities) and art.
   has a short code (like `K3F9-2QXA`) you can share to replay it. You can
   also let the game pick the regions in play, or choose them yourself on
   the setup screen.
+- **Adjustable fuel restock:** Standard, Scarce, Plentiful, or your own
+  per-step rates for each fuel.
 - **Three AI levels**
   - **Easy** – plays loosely and makes mistakes. Good for learning.
   - **Medium** – solid heuristics: values plants by income and fuel cost,
@@ -66,6 +68,9 @@ You can also try it locally: run `./build.sh && go run ./cmd/server` and open
 <http://127.0.0.1:8080>.
 
 ## How to play (short version)
+
+Full rules: [docs/RULES.md](docs/RULES.md) (also in the app under **How to play**).
+
 
 Each round has four phases:
 

@@ -9,18 +9,19 @@ import (
 // View is what a client may see: the game without the hidden deck order
 // or RNG state, plus values the UI needs for the player to move.
 type View struct {
-	Game       *Game                `json:"game"`
-	Current    int                  `json:"current"`
-	Actual     []int                `json:"actual"`
-	Future     []int                `json:"future"`
-	Prices     [NumResources]int    `json:"prices"`
-	CanPass    bool                 `json:"canPass"`
-	BuildCosts []int                `json:"buildCosts,omitempty"` // -1 when not buildable
-	Suggest    *Powering            `json:"suggest,omitempty"`    // best powering, in the power phase
-	Restock    [3][NumResources]int `json:"restock"`              // units added per round, by step
-	Step2At    int                  `json:"step2At"`
-	EndAt      int                  `json:"endAt"`
-	MaxPlants  int                  `json:"maxPlants"`
+	Game       *Game             `json:"game"`
+	Current    int               `json:"current"`
+	Actual     []int             `json:"actual"`
+	Future     []int             `json:"future"`
+	Prices     [NumResources]int `json:"prices"`
+	CanPass    bool              `json:"canPass"`
+	BuildCosts []int             `json:"buildCosts,omitempty"` // -1 when not buildable
+	Suggest    *Powering         `json:"suggest,omitempty"`    // best powering, in the power phase
+	Restock    RestockTable      `json:"restock"`              // units added per round, by step
+	Custom     bool              `json:"customRestock"`
+	Step2At    int               `json:"step2At"`
+	EndAt      int               `json:"endAt"`
+	MaxPlants  int               `json:"maxPlants"`
 }
 
 // View builds the redacted client view.
@@ -44,7 +45,8 @@ func (g *Game) View() View {
 		Step2At:   g.Step2Trigger(),
 		EndAt:     g.EndTrigger(),
 		MaxPlants: g.MaxPlants(),
-		Restock:   resupply[len(g.Players)],
+		Restock:   g.Restock(),
+		Custom:    g.CustomRestock != nil,
 	}
 	for r := Resource(0); r < NumResources; r++ {
 		v.Prices[r] = UnitPrice(r, g.ResMarket[r])
@@ -208,6 +210,11 @@ func (g *Game) Validate() error {
 		if g.ResMarket[r] < 0 || g.ResMarket[r] > marketCap[r] || g.Supply[r] < 0 ||
 			g.ResMarket[r]+g.Supply[r]+held[r] != totalPieces[r] {
 			return errors.New("resource totals")
+		}
+	}
+	if g.CustomRestock != nil {
+		if err := g.CustomRestock.Check(); err != nil {
+			return err
 		}
 	}
 	if g.DiscardFor < -1 || g.DiscardFor >= n {

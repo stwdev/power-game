@@ -91,6 +91,7 @@ function call(fn, arg) {
 // ---------- state ----------
 let board = null; // the current game's map
 let mapList = [];
+let restockDefaults = {}; // standard fuel restock tables by player count
 // The map chosen on the setup screen.
 const setupMap = { board: null, chosen: new Set() };
 let plants = {};
@@ -112,7 +113,9 @@ function pname(i) { return view.game.players[i].name; }
 async function boot() {
   const p = await call('plants');
   const m = await call('maps');
-  if (p.error || m.error) { showFatal(p.error || m.error); return; }
+  const rs = await call('restock');
+  if (p.error || m.error || rs.error) { showFatal(p.error || m.error || rs.error); return; }
+  restockDefaults = rs.ok;
   for (const pl of p.ok) plants[pl.num] = pl;
   mapList = m.ok;
   const sel = $('mapSel');
@@ -147,6 +150,61 @@ function showSetup() {
   $('mapSel').value = id;
   $('regionMode').value = prefs.regionMode === 'choose' ? 'choose' : 'random';
   loadPreview(id, '');
+  $('restockMode').value = ['scarce', 'plentiful', 'custom'].includes(prefs.restockMode) ? prefs.restockMode : 'standard';
+  if (validTable(prefs.customRestock)) customRestock = prefs.customRestock.map((row) => row.slice());
+  renderRestock();
+}
+
+// ---------- setup: fuel restock ----------
+const RES_CAP = [24, 24, 24, 12];
+let customRestock = null;
+
+function validTable(t) {
+  return Array.isArray(t) && t.length === 3 && t.every((row) => Array.isArray(row) && row.length === 4 &&
+    row.every((v, k) => Number.isInteger(v) && v >= 0 && v <= RES_CAP[k]));
+}
+
+// setupRestock is the table the chosen setting gives for this player count.
+function setupRestock() {
+  const std = restockDefaults[Number($('count').value)];
+  switch ($('restockMode').value) {
+    case 'scarce': return std.map((row) => row.map((v) => (v > 0 ? Math.max(1, Math.floor(v / 2)) : 0)));
+    case 'plentiful': return std.map((row) => row.map((v, k) => Math.min(RES_CAP[k], Math.round(v * 1.5))));
+    case 'custom':
+      if (!customRestock) customRestock = std.map((row) => row.slice());
+      return customRestock;
+    default: return std;
+  }
+}
+
+function renderRestock() {
+  const mode = $('restockMode').value;
+  const table = setupRestock();
+  const grid = $('restockGrid');
+  clear(grid);
+  grid.append(h('thead', {}, h('tr', {}, h('th', { text: 'Per round' }), RES.map((r) => h('th', { text: r.icon, title: r.name })))));
+  grid.append(h('tbody', {}, table.map((row, step) => h('tr', {},
+    h('td', { text: 'Step ' + (step + 1) }),
+    row.map((v, k) => h('td', {}, mode === 'custom'
+      ? h('input', {
+        type: 'number', inputmode: 'numeric', min: 0, max: RES_CAP[k], value: v, class: 'num-in',
+        'aria-label': RES[k].name + ' restock in step ' + (step + 1),
+        onchange: (e) => {
+          const n = Math.max(0, Math.min(RES_CAP[k], Math.round(Number(e.target.value) || 0)));
+          customRestock[step][k] = n;
+          e.target.value = n;
+          prefs.customRestock = customRestock;
+          storeJSON(PREFS_KEY, prefs);
+        },
+      })
+      : '+' + v))))));
+  const hints = {
+    standard: 'The usual rates for ' + $('count').value + ' players. Fuel is never restocked beyond what is left in the bank.',
+    scarce: 'Half the usual rates (at least 1 of each): fuel prices climb fast and every unit counts.',
+    plentiful: 'One and a half times the usual rates: cheaper fuel, bigger networks.',
+    custom: 'Set how many units of each fuel return to the market each round (0-24, uranium 0-12).',
+  };
+  $('restockHint').textContent = hints[mode];
 }
 
 // ---------- setup: map ----------
@@ -288,12 +346,14 @@ async function startGame() {
   prefs.count = seats.length;
   prefs.map = $('mapSel').value;
   prefs.regionMode = $('regionMode').value;
+  prefs.restockMode = $('restockMode').value;
   storeJSON(PREFS_KEY, prefs);
   const b = setupMap.board;
   const cfg = {
     players: seats,
     map: { id: b.id, seed: b.seed || 0 },
     regions: choosing() ? [...setupMap.chosen] : [],
+    restock: $('restockMode').value === 'standard' ? null : setupRestock(),
   };
   const r = await call('newGame', JSON.stringify(cfg));
   if (r.error) { toast(r.error); return; }
@@ -457,7 +517,7 @@ function stepTriggers() {
 function restockTable() {
   const g = game();
   return h('table', { class: 'summary restock' },
-    h('thead', {}, h('tr', {}, h('th', { text: 'Restock / round' }), RES.map((r) => h('th', { text: r.icon })))),
+    h('thead', {}, h('tr', {}, h('th', { text: view.customRestock ? 'Restock / round (custom)' : 'Restock / round' }), RES.map((r) => h('th', { text: r.icon })))),
     h('tbody', {}, view.restock.map((row, i) => h('tr', { class: i + 1 === g.step ? 'current' : '' },
       h('td', { text: 'Step ' + (i + 1) + (i + 1 === g.step ? ' (now)' : '') }),
       row.map((n) => h('td', { text: '+' + n }))))));
@@ -523,20 +583,128 @@ function showMenu() {
     h('button', { class: 'btn primary wide', type: 'button', onclick: () => { closeDialog(); } }, 'Close'));
 }
 
+// ---------- rules ----------
+// The rulebook mirrors the engine (engine/game.go); keep the numbers in sync.
+const TABLE_RULES = [
+  // players, regions, max plants, step 2 at, game ends at, plants removed
+  [2, 3, 4, 10, 21, 8], [3, 3, 3, 7, 17, 8], [4, 4, 3, 7, 17, 4], [5, 5, 3, 7, 15, 0], [6, 5, 3, 6, 14, 0],
+];
+
+function rulesTable(head, rows) {
+  return h('table', { class: 'summary rules-table' },
+    h('thead', {}, h('tr', {}, head.map((t) => h('th', { text: t })))),
+    h('tbody', {}, rows.map((r) => h('tr', {}, r.map((c) => h('td', { text: String(c) }))))));
+}
+
+function rulesSection(title, open, ...body) {
+  return h('details', { class: 'rules', open }, h('summary', { text: title }), h('div', { class: 'rules-body' }, body));
+}
+const para = (t) => h('p', { text: t });
+const list = (items) => h('ul', {}, items.map((t) => h('li', { text: t })));
+
 function showHelp() {
-  const steps = [
-    ['1. Turn order', 'The player with the most cities goes first (ties: biggest plant). Leaders choose plants first but buy fuel and build last.'],
-    ['2. Auction plants', 'In turn, pick a plant from the top row of the market and bid at least its number. Others raise or pass. Each player buys at most one plant per round (everyone must buy in round 1). You may own ' + (view ? view.maxPlants : 3) + ' plants.'],
-    ['3. Buy fuel', 'Last player first. Each plant stores twice what it burns. Prices rise as the market empties.'],
-    ['4. Build', 'Last player first. Your first house costs $10. After that you pay the house plus the cheapest road from your network. In step 1 each city holds one house, step 2 two, step 3 three.'],
-    ['5. Power & get paid', 'Pick which plants to run (or none, to save fuel). Each powered city earns money; you can never power more cities than you own.'],
-    ['Winning', 'When someone reaches the end city count, the player who powers the most cities that round wins.'],
-  ];
   const back = view ? showMenu : closeDialog;
+  const std = restockDefaults[view ? view.game.players.length : Number($('count').value) || 3];
+  const income = PAYMENT.map((v, i) => [i, '$' + v]);
   openDialog(
-    h('h2', { text: 'How to play' }),
-    steps.map(([t, d]) => h('div', { class: 'help' }, h('strong', { text: t }), h('p', { text: d }))),
-    h('p', { class: 'muted small', text: 'Unofficial fan game inspired by the classic power-network board game. Original map and art.' }),
+    h('h2', { text: 'Rules' }),
+    para('Tap a heading to open it.'),
+    rulesSection('Goal', true,
+      para('Buy power plants, keep them fuelled and connect cities to your network. When the game ends, the player who powers the most cities in the final round wins.')),
+    rulesSection('Setup and player count', false,
+      para('Everyone starts with $50, no plants and no cities. Only some regions of the map are in play: picked at random, or chosen on the setup screen. The regions in play always touch each other.'),
+      rulesTable(['Players', 'Regions', 'Max plants', 'Step 2 at', 'Ends at', 'Removed'], TABLE_RULES),
+      para('"Step 2 at" and "Ends at" are city counts. "Removed" is how many random plants are taken out of the deck, unseen, at the start.'),
+      para('The plant market starts with plants 3 to 10. Plant 13 is on top of the deck and the Step 3 card at the bottom. The fuel market starts with coal from $1, oil from $3, garbage from $7 and uranium at $14 and $16.')),
+    rulesSection('A round', false,
+      para('Every round has five phases, always in this order:'),
+      h('ol', {}, ['Turn order', 'Plant auction', 'Buy fuel', 'Build', 'Power and get paid'].map((t) => h('li', { text: t })))),
+    rulesSection('1. Turn order', false,
+      list([
+        'The player with the most cities goes first. Ties go to whoever owns the biggest-numbered plant.',
+        'In round 1 the order is random, then it is set again by plant size straight after the round-1 auction.',
+        'Being first is a mixed blessing: you choose plants first, but you buy fuel and build last.',
+      ])),
+    rulesSection('2. Plant auction', false,
+      list([
+        'The top row of the market is for sale; the bottom row is what comes next. (In step 3 all six plants are for sale.)',
+        'In turn order, each player who has not bought a plant this round either picks a plant and opens bidding at its number or more, or passes.',
+        'Passing means you buy no plant this round. In round 1 everyone must buy one, unless they cannot afford any.',
+        'Bidding goes round in turn order. Each bidder must raise or drop out of this auction. The last one in pays their bid and takes the plant.',
+        'Each player buys at most one plant per round. If the player who opened the auction loses it, they choose again.',
+        'You may own ' + (view ? view.maxPlants : '3 (4 with two players)') + ' plants. Buying one more makes you scrap one of your older plants. Its fuel moves to your other plants if there is room; the rest goes back to the bank.',
+        'After each sale a new plant is drawn from the deck and the market is re-sorted.',
+        'If nobody buys a plant all round, the cheapest plant leaves the game.',
+        'Any plant in the market numbered no higher than the biggest network (in cities) leaves the game and is replaced.',
+      ])),
+    rulesSection('Reading a plant card', false,
+      list([
+        'The big number is the plant\'s number and minimum bid.',
+        '"2🪨 → 3🏠" means it burns 2 coal to power up to 3 cities.',
+        '🪨🛢️ plants are hybrids: they burn coal, oil or any mix. 🌱 eco plants need no fuel.',
+        'Each plant stores up to twice the fuel it burns. Hybrid storage can hold coal and oil in any mix.',
+      ])),
+    rulesSection('3. Buy fuel', false,
+      list([
+        'Players buy in reverse turn order: last player first.',
+        'Coal, oil and garbage are sold three units per price step from $1 to $8. Uranium is one unit per step: $1-$8, then $10, $12, $14 and $16.',
+        'You always pay for the cheapest units left, so prices rise as the market empties.',
+        'Add fuel to your order, then tap Confirm. Reset clears the order. Nothing is bought until you confirm, and the whole order is checked together (stock, storage and money).',
+        'You can only buy what your plants can store.',
+      ])),
+    rulesSection('4. Build', false,
+      list([
+        'Players build in reverse turn order: last player first.',
+        'Your first house can go in any city in play and costs $10.',
+        'Every later house costs the house price plus the cheapest road from any city in your network. Road costs are the numbers on the map.',
+        'House prices: the first house in a city costs $10, the second $15 and the third $20.',
+        'Each city takes one house in step 1, two in step 2 and three in step 3. You can never have two houses in one city.',
+        'Roads can pass through any city in play, including full cities and other players\' cities.',
+        'You may build as many houses as you can afford, one at a time; costs update after each one.',
+      ])),
+    rulesSection('5. Power and get paid', false,
+      list([
+        'In turn order, each player picks which plants to run, or none to save fuel. A hybrid lets you choose the coal/oil mix.',
+        'A plant that runs burns its fuel and powers up to its number of cities. You can never power more cities than you own.',
+        'You are paid by the number of cities powered (table below). Powering nothing still pays $10.',
+      ]),
+      rulesTable(['Powered', 'Income'], income)),
+    rulesSection('End of round', false,
+      list([
+        'Fuel restocks from the bank (table below). The bank only holds the fuel not in the market or on plants, so restock can come up short.',
+        'Steps 1 and 2: the most expensive plant in the market goes to the bottom of the deck and a new plant is drawn.',
+        'Step 3: the cheapest plant leaves the game and a new plant is drawn.',
+      ]),
+      para('Standard restock per round for this many players' + (view && view.customRestock ? ' (this game uses custom rates: see the Step panel)' : '') + ':'),
+      rulesTable(['Step', '🪨', '🛢️', '🗑️', '☢️'], std ? std.map((row, i) => [i + 1, ...row.map((v) => '+' + v)]) : []),
+      para('The setup screen can change these: Scarce (half, at least 1), Plentiful (one and a half times) or your own numbers.')),
+    rulesSection('Steps', false,
+      list([
+        'Step 1: one house per city.',
+        'Step 2 starts after the build phase in which someone reaches the "Step 2 at" city count. The cheapest plant leaves the market. Cities now take two houses.',
+        'Step 3 starts when the Step 3 card is drawn from the plant deck. At the end of that phase the cheapest plant leaves, the deck is shuffled and the market becomes six plants, all for sale. Cities now take three houses.',
+      ])),
+    rulesSection('End of the game', false,
+      list([
+        'The game ends after the build phase in which someone reaches the "Ends at" city count.',
+        'Everyone still powers cities and gets paid that round.',
+        'The winner powers the most cities in that final round. Ties go to the most cash, then the most cities.',
+        'Owning the most cities is not enough: you need the plants and fuel to power them.',
+      ])),
+    rulesSection('Maps', false,
+      list([
+        'Classic, Lakeside and Ridge are fixed maps. Random makes a new map with its own map code; enter a code to replay a map.',
+        'Every map has six regions of at least seven cities.',
+      ])),
+    rulesSection('Computer players', false,
+      list([
+        'Easy plays loosely and makes mistakes.',
+        'Medium values plants by income against fuel cost and grows to match its plants.',
+        'Hard plays out the rest of the game many times before each key decision and picks what wins most often.',
+        'Bots only use information you can see too; they never peek at the deck.',
+        'Bot speed in the menu only changes how fast bots move, not how well they play.',
+      ])),
+    h('p', { class: 'muted small', text: 'Unofficial fan game inspired by the classic power-network board game. Original maps and art.' }),
     h('button', { class: 'btn primary wide', type: 'button', onclick: back }, 'Back'));
 }
 
@@ -1132,6 +1300,8 @@ function wireUI() {
   });
   $('regionMode').addEventListener('change', () => { setupMap.chosen = new Set(); renderPreview(); });
   $('count').addEventListener('change', renderPreview);
+  $('count').addEventListener('change', renderRestock);
+  $('restockMode').addEventListener('change', renderRestock);
   $('preview').addEventListener('click', (e) => {
     const el = e.target.closest && e.target.closest('[data-region]');
     if (el) toggleRegion(Number(el.dataset.region));

@@ -157,3 +157,26 @@ func TestBotsFinishOnEveryMap(t *testing.T) {
 		checkSave(t, g)
 	}
 }
+
+func TestBotsFinishWithoutRestock(t *testing.T) {
+	for n := 2; n <= 6; n += 2 {
+		zero := engine.RestockTable{}
+		cfg := engine.Config{Seed: uint64(n), Restock: &zero}
+		for k := 0; k < n; k++ {
+			cfg.Players = append(cfg.Players, engine.PlayerConfig{AI: engine.Level(1 + k%2)})
+		}
+		g, err := engine.NewGame(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for steps := 0; g.Phase != engine.PhaseOver; steps++ {
+			if steps > 30000 {
+				t.Fatalf("%d players: game did not finish (round %d)", n, g.Round)
+			}
+			if err := g.Apply(Decide(g)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		checkSave(t, g)
+	}
+}

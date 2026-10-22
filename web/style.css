@@ -254,3 +254,17 @@ button.plant { cursor: pointer; }
 .chip-btn.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; font-weight: 700; }
 #regionHint.warn { color: var(--danger); font-weight: 600; }
 .btn.primary:disabled { opacity: .45; }
+
+/* setup: restock grid */
+.num-in { width: 52px; padding: 6px 4px; text-align: center; font-weight: 700; }
+#restockGrid td, #restockGrid th { padding: 4px 2px; }
+
+/* rules */
+details.rules { border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; }
+details.rules summary { cursor: pointer; font-weight: 700; padding: 12px 0; min-height: 44px; list-style-position: inside; }
+details.rules[open] summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.rules-body { padding-bottom: 10px; font-size: 14px; }
+.rules-body p { margin: 6px 0; }
+.rules-body ul, .rules-body ol { margin: 6px 0; padding-left: 20px; }
+.rules-body li { margin: 4px 0; }
+.rules-table th, .rules-table td { text-align: center !important; font-size: 13px; padding: 4px 2px; }
