@@ -32,6 +32,7 @@ func main() {
 		"board":   wrap(func(string) (any, error) { return board() }),
 		"maps":    wrap(func(string) (any, error) { return engine.Maps(), nil }),
 		"preview": wrap(preview),
+		"restock": wrap(func(string) (any, error) { return restockDefaults(), nil }),
 		"plants":  wrap(func(string) (any, error) { return engine.AllPlants(), nil }),
 	}
 	js.Global().Set("PowerGame", js.ValueOf(api))
@@ -116,6 +117,15 @@ func preview(arg string) (any, error) {
 		}
 	}
 	return engine.BuildBoard(spec)
+}
+
+// restockDefaults is the standard fuel restock table for each table size.
+func restockDefaults() map[int]engine.RestockTable {
+	out := map[int]engine.RestockTable{}
+	for n := engine.MinPlayers; n <= engine.MaxPlayers; n++ {
+		out[n] = engine.DefaultRestock(n)
+	}
+	return out
 }
 
 func randomSeed() (uint64, error) {

@@ -60,6 +60,18 @@
     <p id="regionHint" class="muted small"></p>
     <div id="regionChips" class="chips"></div>
   </div>
+  <div class="card">
+    <label class="row">Fuel restock
+      <select id="restockMode" aria-label="Fuel restock rates">
+        <option value="standard">Standard</option>
+        <option value="scarce">Scarce (half)</option>
+        <option value="plentiful">Plentiful (×1.5)</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+    <p id="restockHint" class="muted small"></p>
+    <table id="restockGrid" class="summary restock"></table>
+  </div>
   <button id="start" class="btn primary wide" type="button">Start game</button>
   <button id="howto" class="btn wide" type="button">How to play</button>
 </section>
