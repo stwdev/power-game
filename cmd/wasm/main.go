@@ -29,7 +29,9 @@ func main() {
 		"aiStep":  wrap(func(string) (any, error) { return aiStep() }),
 		"save":    wrap(save),
 		"load":    wrap(load),
-		"board":   wrap(func(string) (any, error) { return engine.GetBoard(), nil }),
+		"board":   wrap(func(string) (any, error) { return board() }),
+		"maps":    wrap(func(string) (any, error) { return engine.Maps(), nil }),
+		"preview": wrap(preview),
 		"plants":  wrap(func(string) (any, error) { return engine.AllPlants(), nil }),
 	}
 	js.Global().Set("PowerGame", js.ValueOf(api))
@@ -79,16 +81,61 @@ func view() (any, error) {
 	return game.View(), nil
 }
 
+// board is the current game's map.
+func board() (any, error) {
+	if game == nil {
+		return nil, errors.New("no game")
+	}
+	return game.Board(), nil
+}
+
+// preview builds a map for the setup screen. A random map with no code
+// gets a fresh seed; a code replays a shared map.
+func preview(arg string) (any, error) {
+	var req struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(arg), &req); err != nil {
+		return nil, errors.New("bad map request")
+	}
+	spec := engine.MapSpec{ID: req.ID}
+	if req.ID == "random" {
+		if req.Code != "" {
+			seed, err := engine.ParseMapCode(req.Code)
+			if err != nil {
+				return nil, err
+			}
+			spec.Seed = seed
+		} else {
+			seed, err := randomSeed()
+			if err != nil {
+				return nil, err
+			}
+			spec.Seed = seed % engine.MaxMapSeed
+		}
+	}
+	return engine.BuildBoard(spec)
+}
+
+func randomSeed() (uint64, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(b[:]), nil
+}
+
 func newGame(arg string) (any, error) {
 	var cfg engine.Config
 	if err := json.Unmarshal([]byte(arg), &cfg); err != nil {
 		return nil, errors.New("bad config")
 	}
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	seed, err := randomSeed()
+	if err != nil {
 		return nil, err
 	}
-	cfg.Seed = binary.LittleEndian.Uint64(b[:])
+	cfg.Seed = seed
 	g, err := engine.NewGame(cfg)
 	if err != nil {
 		return nil, err

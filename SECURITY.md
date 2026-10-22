@@ -44,5 +44,22 @@ and does not do.
 - Read/write/idle timeouts and a header-size cap; binds to `127.0.0.1` unless
   you choose otherwise.
 
+## Android app (APK)
+- **Requests no permissions**, including no `INTERNET` permission. The game is
+  bundled in the APK and served to the WebView from a private origin.
+  Requests to any other address are refused, and the app never navigates
+  anywhere else.
+- The WebView has file and content access disabled, cannot open new windows,
+  and serves the same Content Security Policy as the web version.
+  `allowBackup` is off.
+- Built from source in CI with the Android SDK's own tools (aapt2, javac, d8,
+  zipalign, apksigner). No Gradle, plugins or libraries are downloaded.
+- Signed with a key that only exists in your GitHub secrets. In CI it is
+  written to a private temp file and deleted straight after signing. Each
+  release publishes the certificate fingerprint and an APK SHA-256 checksum.
+- The release workflow passes user input through environment variables (not
+  inline into scripts), checks the version format strictly, and is the only
+  job with write access to the repository.
+
 ## Reporting
 Please open a private security advisory on the GitHub repository.

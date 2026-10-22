@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"powergame/engine"
@@ -124,8 +125,35 @@ func TestBotsIgnoreHiddenDeck(t *testing.T) {
 			g2.Deck[i], g2.Deck[j] = g2.Deck[j], g2.Deck[i]
 		}
 		a1, a2 := Decide(g1), Decide(g2)
-		if a1 != a2 {
+		if !reflect.DeepEqual(a1, a2) {
 			t.Errorf("level %d: decision depends on hidden deck: %+v vs %+v", lvl, a1, a2)
 		}
+	}
+}
+
+func TestBotsFinishOnEveryMap(t *testing.T) {
+	maps := []engine.MapSpec{{ID: "lakeside"}, {ID: "ridge"}}
+	for s := uint64(1); s <= 8; s++ {
+		maps = append(maps, engine.MapSpec{ID: "random", Seed: s * 104729})
+	}
+	for i, m := range maps {
+		n := 2 + i%5
+		cfg := engine.Config{Seed: uint64(i + 1), Map: m}
+		for k := 0; k < n; k++ {
+			cfg.Players = append(cfg.Players, engine.PlayerConfig{AI: engine.Level(1 + k%2)})
+		}
+		g, err := engine.NewGame(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for steps := 0; g.Phase != engine.PhaseOver; steps++ {
+			if steps > 20000 {
+				t.Fatalf("%v: game did not finish", m)
+			}
+			if err := g.Apply(Decide(g)); err != nil {
+				t.Fatalf("%v: %v", m, err)
+			}
+		}
+		checkSave(t, g)
 	}
 }

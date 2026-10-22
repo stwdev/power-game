@@ -9,16 +9,18 @@ import (
 // View is what a client may see: the game without the hidden deck order
 // or RNG state, plus values the UI needs for the player to move.
 type View struct {
-	Game       *Game             `json:"game"`
-	Current    int               `json:"current"`
-	Actual     []int             `json:"actual"`
-	Future     []int             `json:"future"`
-	Prices     [NumResources]int `json:"prices"`
-	CanPass    bool              `json:"canPass"`
-	BuildCosts []int             `json:"buildCosts,omitempty"` // -1 when not buildable
-	Step2At    int               `json:"step2At"`
-	EndAt      int               `json:"endAt"`
-	MaxPlants  int               `json:"maxPlants"`
+	Game       *Game                `json:"game"`
+	Current    int                  `json:"current"`
+	Actual     []int                `json:"actual"`
+	Future     []int                `json:"future"`
+	Prices     [NumResources]int    `json:"prices"`
+	CanPass    bool                 `json:"canPass"`
+	BuildCosts []int                `json:"buildCosts,omitempty"` // -1 when not buildable
+	Suggest    *Powering            `json:"suggest,omitempty"`    // best powering, in the power phase
+	Restock    [3][NumResources]int `json:"restock"`              // units added per round, by step
+	Step2At    int                  `json:"step2At"`
+	EndAt      int                  `json:"endAt"`
+	MaxPlants  int                  `json:"maxPlants"`
 }
 
 // View builds the redacted client view.
@@ -42,9 +44,15 @@ func (g *Game) View() View {
 		Step2At:   g.Step2Trigger(),
 		EndAt:     g.EndTrigger(),
 		MaxPlants: g.MaxPlants(),
+		Restock:   resupply[len(g.Players)],
 	}
 	for r := Resource(0); r < NumResources; r++ {
 		v.Prices[r] = UnitPrice(r, g.ResMarket[r])
+	}
+	if g.Phase == PhasePower && cur >= 0 {
+		p := &g.Players[cur]
+		best := BestPowering(p.Plants, p.Res, len(p.Cities))
+		v.Suggest = &best
 	}
 	if g.Phase == PhaseBuild && v.Current >= 0 {
 		v.BuildCosts = g.BuildCosts(v.Current)
@@ -75,6 +83,14 @@ func (g *Game) Validate() error {
 	if n < MinPlayers || n > MaxPlayers {
 		return errors.New("player count")
 	}
+	b, err := BuildBoard(g.Map)
+	if err != nil {
+		return err
+	}
+	if g.Map.ID == "" {
+		g.Map.ID = "classic"
+	}
+	g.board = b
 	if len(g.Order) != n || len(g.Bought) != n || len(g.Passed) != n {
 		return errors.New("table size")
 	}
@@ -89,21 +105,21 @@ func (g *Game) Validate() error {
 		return errors.New("step or round")
 	}
 	switch g.Phase {
-	case PhaseAuction, PhaseResources, PhaseBuild, PhaseOver:
+	case PhaseAuction, PhaseResources, PhaseBuild, PhasePower, PhaseOver:
 	default:
 		return errors.New("phase")
 	}
 	if g.Turn < 0 || g.Turn > n {
 		return errors.New("turn")
 	}
-	if len(g.Owners) != len(board.Cities) {
+	if len(g.Owners) != len(g.Board().Cities) {
 		return errors.New("owners")
 	}
-	if len(g.Regions) < 1 || len(g.Regions) > len(board.RegionNames) {
+	if len(g.Regions) < 1 || len(g.Regions) > len(g.Board().RegionNames) {
 		return errors.New("regions")
 	}
 	for _, r := range g.Regions {
-		if r < 0 || r >= len(board.RegionNames) {
+		if r < 0 || r >= len(g.Board().RegionNames) {
 			return errors.New("region")
 		}
 	}
@@ -172,7 +188,7 @@ func (g *Game) Validate() error {
 		}
 		citySeen := map[int]bool{}
 		for _, c := range p.Cities {
-			if c < 0 || c >= len(board.Cities) || citySeen[c] || !contains(g.Owners[c], i) {
+			if c < 0 || c >= len(g.Board().Cities) || citySeen[c] || !contains(g.Owners[c], i) {
 				return errors.New("cities")
 			}
 			citySeen[c] = true

@@ -20,7 +20,7 @@ func newTestGame(t *testing.T, n int) *Game {
 }
 
 func TestBoardIsConnected(t *testing.T) {
-	b := GetBoard()
+	b := classicBoard()
 	all := make([]bool, len(b.Cities))
 	for i := range all {
 		all[i] = true
@@ -146,7 +146,7 @@ func TestBuildCostsMatchBuildCost(t *testing.T) {
 	g.Phase, g.Turn = PhaseBuild, 0
 	p := g.CurrentPlayer()
 	var first int
-	for c := range board.Cities {
+	for c := range g.Board().Cities {
 		if g.IsActive(c) {
 			first = c
 			break
@@ -156,7 +156,7 @@ func TestBuildCostsMatchBuildCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	costs := g.BuildCosts(p)
-	for c := range board.Cities {
+	for c := range g.Board().Cities {
 		want, err := g.BuildCost(p, c)
 		if err != nil {
 			want = -1
@@ -228,7 +228,7 @@ func TestCleanName(t *testing.T) {
 }
 
 func TestRegionsAreConnected(t *testing.T) {
-	adj := board.RegionAdjacency()
+	adj := classicBoard().RegionAdjacency()
 	for seed := uint64(0); seed < 50; seed++ {
 		for n := 2; n <= 6; n++ {
 			cfg := Config{Seed: seed}
@@ -266,5 +266,151 @@ func TestViewNeverSendsNullLists(t *testing.T) {
 		if strings.Contains(string(data), k) {
 			t.Errorf("view contains %s", k)
 		}
+	}
+}
+
+// powerPhase sets up player 0 with plants 5 (hybrid 2->1), 13 (eco 1),
+// 15 (coal 2->3), 3 coal, 2 oil and 4 cities, and makes it their turn to
+// power.
+func powerPhase(t *testing.T) *Game {
+	t.Helper()
+	g := newTestGame(t, 3)
+	p := &g.Players[0]
+	p.Plants = []int{5, 13, 15}
+	for _, n := range p.Plants {
+		g.Market = removeInt(g.Market, n)
+		g.Deck = removeInt(g.Deck, n)
+	}
+	p.Res = [NumResources]int{3, 2, 0, 0}
+	g.ResMarket[Coal] -= 3
+	g.ResMarket[Oil] -= 2
+	p.Cities = []int{0, 1, 2, 3}
+	for _, c := range p.Cities {
+		g.Owners[c] = []int{0}
+	}
+	g.Phase, g.Turn, g.Order = PhasePower, 0, []int{0, 1, 2}
+	return g
+}
+
+func TestPowerChoice(t *testing.T) {
+	g := powerPhase(t)
+	if v := g.View(); v.Suggest == nil || v.Suggest.Powered != 4 {
+		t.Fatalf("suggestion %+v", g.View().Suggest)
+	}
+	// Run only the eco plant and the coal plant: 4 cities, 2 coal.
+	if err := g.Apply(Action{Type: ActPower, Player: 0, Fire: []int{13, 15}}); err != nil {
+		t.Fatal(err)
+	}
+	p := g.Players[0]
+	if p.LastPowered != 4 || p.Res != [NumResources]int{1, 2, 0, 0} || p.LastIncome != Income(4) {
+		t.Fatalf("got %+v", p)
+	}
+	if g.CurrentPlayer() != 1 || g.Phase != PhasePower {
+		t.Fatal("turn should pass to the next player")
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPowerNothingSavesFuel(t *testing.T) {
+	g := powerPhase(t)
+	money := g.Players[0].Money
+	if err := g.Apply(Action{Type: ActPass, Player: 0}); err != nil {
+		t.Fatal(err)
+	}
+	p := g.Players[0]
+	if p.LastPowered != 0 || p.Money != money+Income(0) || p.Res != [NumResources]int{3, 2, 0, 0} {
+		t.Fatalf("got %+v", p)
+	}
+}
+
+func TestPowerHybridSplit(t *testing.T) {
+	g := powerPhase(t)
+	// Hybrid plant 5 burns 2: choose 1 coal + 1 oil.
+	if err := g.Apply(Action{Type: ActPower, Player: 0, Fire: []int{5}, HybridCoal: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.Players[0].Res; got != [NumResources]int{2, 1, 0, 0} {
+		t.Fatalf("res %v", got)
+	}
+}
+
+func TestPowerRejectsBadChoices(t *testing.T) {
+	bad := []Action{
+		{Type: ActPower, Fire: []int{20}},                   // not owned
+		{Type: ActPower, Fire: []int{15, 15}},               // repeated
+		{Type: ActPower, Fire: []int{5}, HybridCoal: 3},     // hybrid only burns 2
+		{Type: ActPower, Fire: []int{5, 15}, HybridCoal: 2}, // needs 4 coal, has 3
+		{Type: ActBuild, City: 5},
+	}
+	for i, a := range bad {
+		g := powerPhase(t)
+		before := g.Players[0]
+		if err := g.Apply(a); err == nil {
+			t.Errorf("bad power choice %d accepted", i)
+		}
+		if g.Players[0].Res != before.Res || g.Turn != 0 {
+			t.Errorf("rejected action %d changed state", i)
+		}
+	}
+}
+
+func TestPowerLastPlayerEndsRound(t *testing.T) {
+	g := powerPhase(t)
+	round := g.Round
+	for i := 0; i < 3; i++ {
+		if err := g.Apply(Action{Type: ActPass, Player: g.CurrentPlayer()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g.Round != round+1 || g.Phase != PhaseAuction {
+		t.Fatalf("round %d phase %s", g.Round, g.Phase)
+	}
+}
+
+func TestBuyAllIsAtomic(t *testing.T) {
+	g := newTestGame(t, 3)
+	g.Players[0].Plants = []int{4, 7} // coal 2 (stores 4), oil 3 (stores 6)
+	g.Market = removeInt(removeInt(g.Market, 4), 7)
+	g.Phase, g.Turn, g.Order = PhaseResources, 0, []int{1, 2, 0} // last in order buys first
+	money, coal := g.Players[0].Money, g.ResMarket[Coal]
+
+	// Too much coal for storage: nothing may change.
+	if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: [NumResources]int{5, 1, 0, 0}}); err == nil {
+		t.Fatal("over-storage order accepted")
+	}
+	if g.Players[0].Money != money || g.ResMarket[Coal] != coal || g.Turn != 0 {
+		t.Fatal("rejected order changed state")
+	}
+	for _, bad := range [][NumResources]int{{-1, 0, 0, 0}, {0, 0, 0, 99}, {0, 0, 1, 0}} {
+		if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: bad}); err == nil {
+			t.Fatalf("bad order %v accepted", bad)
+		}
+	}
+
+	want, err := g.OrderCost(0, [NumResources]int{4, 3, 0, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Apply(Action{Type: ActBuyAll, Player: 0, Amounts: [NumResources]int{4, 3, 0, 0}}); err != nil {
+		t.Fatal(err)
+	}
+	p := g.Players[0]
+	if p.Res != [NumResources]int{4, 3, 0, 0} || p.Money != money-want || want != 1+1+1+2+3+3+3 {
+		t.Fatalf("got %+v, cost %d", p, want)
+	}
+	if g.Turn != 1 || g.CurrentPlayer() != 2 {
+		t.Fatal("confirming the order should end the turn")
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestViewShowsRestock(t *testing.T) {
+	g := newTestGame(t, 4)
+	if v := g.View(); v.Restock[1] != [NumResources]int{6, 4, 3, 2} {
+		t.Fatalf("restock %v", v.Restock)
 	}
 }

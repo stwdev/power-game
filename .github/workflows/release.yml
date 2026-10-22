@@ -1,0 +1,99 @@
+name: Release APK
+
+# Publishes a signed Android APK as a GitHub release (for Obtainium or a
+# manual install). Start it from the Actions tab ("Run workflow", enter a
+# version such as 1.0.0) or by pushing a tag like v1.0.0.
+#
+# Needs two repository secrets, made with `go run ./cmd/genkey <dir>`:
+#   ANDROID_SIGNING_KEY   contents of signing-key.b64
+#   ANDROID_SIGNING_CERT  contents of signing-cert.pem
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number, e.g. 1.0.0'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      # Inputs are passed through env, never pasted into the script, so they
+      # cannot inject shell commands.
+      - name: Check version
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then V="$INPUT_VERSION"; else V="$REF_NAME"; fi
+          V="${V#v}"
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}$'; then
+            echo "::error::Version must look like 1.2.3 (each part 0-99), got '$V'"
+            exit 1
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Check signing secrets
+        env:
+          KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          CERT: ${{ secrets.ANDROID_SIGNING_CERT }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$CERT" ]; then
+            echo "::error::Add the ANDROID_SIGNING_KEY and ANDROID_SIGNING_CERT repository secrets (see README: Android app)."
+            exit 1
+          fi
+
+      - run: go vet ./...
+      - run: go test -short ./...
+      - run: ./build.sh
+
+      - name: Build signed APK
+        env:
+          KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          CERT: ${{ secrets.ANDROID_SIGNING_CERT }}
+        run: |
+          umask 077
+          d=$(mktemp -d)
+          printf '%s\n' "$KEY" > "$d/key.b64"
+          printf '%s\n' "$CERT" > "$d/cert.pem"
+          APK="power-game-v$VERSION.apk"
+          android/build.sh "$VERSION" "$d/key.b64" "$d/cert.pem" "$APK"
+          FP=$(openssl x509 -in "$d/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2)
+          rm -rf "$d"
+          sha256sum "$APK" > "$APK.sha256"
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          echo "CERT_FP=$FP" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<NOTES
+          Power Game v$VERSION for Android.
+
+          - Install **$APK** directly, or add this repository to Obtainium.
+          - Works offline and requests no Android permissions.
+          - Signing certificate SHA-256: \`$CERT_FP\`
+          - APK checksum: see \`$APK.sha256\`.
+          NOTES
+          gh release create "v$VERSION" "$APK" "$APK.sha256" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Power Game v$VERSION" --notes-file notes.md

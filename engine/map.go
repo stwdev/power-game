@@ -20,8 +20,13 @@ type Edge struct {
 	Cost int `json:"cost"`
 }
 
-// Board is the static map: an original, fictional land of six regions.
+// Board is a map: cities grouped into regions, joined by roads. Boards are
+// never loaded from outside; they are rebuilt from a MapSpec.
 type Board struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Seed        uint64   `json:"seed,omitempty"` // random maps only
+	Code        string   `json:"code,omitempty"` // shareable form of Seed
 	Cities      []City   `json:"cities"`
 	Edges       []Edge   `json:"edges"`
 	RegionNames []string `json:"regionNames"`
@@ -49,19 +54,21 @@ var cityData = []City{
 
 var regionNames = []string{"Frostmark", "Highreach", "Stormcoast", "Redlands", "Goldplain", "Sunreach"}
 
-var board = buildBoard()
-
-// GetBoard returns the shared, read-only board.
-func GetBoard() *Board { return board }
-
-func buildBoard() *Board {
-	b := &Board{RegionNames: regionNames, Width: 640, Height: 940}
+func classicBoard() *Board {
+	b := &Board{ID: "classic", Name: "Classic", RegionNames: regionNames, Width: 640, Height: 940}
 	for _, c := range cityData {
 		b.Cities = append(b.Cities, City{Name: c.Name, Region: c.Region, X: c.Y + 20, Y: c.X + 20})
 	}
+	b.connect()
+	return b
+}
+
+// connect builds the roads between the board's cities.
+func (b *Board) connect() {
 	// Gabriel graph: connect a and b when no other city lies inside the
 	// circle whose diameter is ab. It is planar and connected, so it gives
 	// a clean road network without hand-authoring edges.
+	b.Edges = nil
 	n := len(b.Cities)
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
@@ -90,7 +97,6 @@ func buildBoard() *Board {
 		b.adj[e.A] = append(b.adj[e.A], e)
 		b.adj[e.B] = append(b.adj[e.B], Edge{A: e.B, B: e.A, Cost: e.Cost})
 	}
-	return b
 }
 
 func sq(x float64) float64 { return x * x }

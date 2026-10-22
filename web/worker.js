@@ -3,7 +3,7 @@
 'use strict';
 importScripts('wasm_exec.js');
 
-const ALLOWED = new Set(['newGame', 'view', 'apply', 'aiStep', 'save', 'load', 'board', 'plants']);
+const ALLOWED = new Set(['newGame', 'view', 'apply', 'aiStep', 'save', 'load', 'board', 'plants', 'maps', 'preview']);
 let markReady;
 const ready = new Promise((resolve) => { markReady = resolve; });
 self.powerGameReady = () => markReady();

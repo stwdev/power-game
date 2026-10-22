@@ -36,6 +36,30 @@
     <div id="seats"></div>
     <p class="muted small">Several humans can share one phone (pass-and-play). Online play is planned.</p>
   </div>
+  <div class="card">
+    <label class="row">Map
+      <select id="mapSel" aria-label="Map"></select>
+    </label>
+    <p id="mapDesc" class="muted small"></p>
+    <div id="mapCodeRow" class="code-row hidden">
+      <span class="muted small">Map code</span>
+      <strong id="mapCode"></strong>
+      <button id="newMap" class="btn small" type="button">New map</button>
+    </div>
+    <div id="codeEntry" class="code-row hidden">
+      <input id="codeInput" type="text" maxlength="12" placeholder="Have a code? e.g. K3F9-2QXA" aria-label="Map code" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <button id="useCode" class="btn small" type="button">Load</button>
+    </div>
+    <svg id="preview" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Map preview"></svg>
+    <label class="row">Regions in play
+      <select id="regionMode" aria-label="How regions are chosen">
+        <option value="random">Random</option>
+        <option value="choose">I'll choose</option>
+      </select>
+    </label>
+    <p id="regionHint" class="muted small"></p>
+    <div id="regionChips" class="chips"></div>
+  </div>
   <button id="start" class="btn primary wide" type="button">Start game</button>
   <button id="howto" class="btn wide" type="button">How to play</button>
 </section>

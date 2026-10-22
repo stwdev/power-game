@@ -89,14 +89,17 @@ function call(fn, arg) {
 }
 
 // ---------- state ----------
-let board = null;
+let board = null; // the current game's map
+let mapList = [];
+// The map chosen on the setup screen.
+const setupMap = { board: null, chosen: new Set() };
 let plants = {};
 let view = null;
 let busy = false;
 let aiTimer = null;
 let lastHuman = -1;
 let gate = false; // waiting for a pass-and-play hand-over or summary
-let ui = { tab: 'map', pick: null, bid: 0, city: null };
+let ui = { tab: 'map', pick: null, bid: 0, city: null, fire: null, hcoal: 0 };
 const prefs = Object.assign({ speed: 'normal', seats: null, count: 3 }, loadJSON(PREFS_KEY, {}));
 
 function game() { return view && view.game; }
@@ -107,15 +110,18 @@ function pname(i) { return view.game.players[i].name; }
 
 // ---------- boot ----------
 async function boot() {
-  const b = await call('board');
   const p = await call('plants');
-  if (b.error || p.error) { showFatal(b.error || p.error); return; }
-  board = b.ok;
+  const m = await call('maps');
+  if (p.error || m.error) { showFatal(p.error || m.error); return; }
   for (const pl of p.ok) plants[pl.num] = pl;
-  buildMap();
+  mapList = m.ok;
+  const sel = $('mapSel');
+  for (const info of mapList) sel.append(h('option', { value: info.id }, info.name));
   wireUI();
   showSetup();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  // The Android app ships its files in the APK, so it needs no offline cache.
+  const inApp = navigator.userAgent.includes('PowerGameApp');
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !inApp) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }
@@ -137,6 +143,110 @@ function showSetup() {
   $('resume').classList.toggle('hidden', !loadJSON(SAVE_KEY, null));
   $('count').value = String(prefs.count || 3);
   renderSeats();
+  const id = mapList.some((m) => m.id === prefs.map) ? prefs.map : 'classic';
+  $('mapSel').value = id;
+  $('regionMode').value = prefs.regionMode === 'choose' ? 'choose' : 'random';
+  loadPreview(id, '');
+}
+
+// ---------- setup: map ----------
+const END_AT = { 2: 21, 3: 17, 4: 17, 5: 15, 6: 14 };
+const REGIONS_FOR = { 2: 3, 3: 3, 4: 4, 5: 5, 6: 5 };
+
+async function loadPreview(id, code) {
+  const r = await call('preview', JSON.stringify({ id, code }));
+  if (r.error) { toast(r.error); return false; }
+  setupMap.board = r.ok;
+  setupMap.chosen = new Set();
+  const info = mapList.find((m) => m.id === id);
+  $('mapDesc').textContent = info ? info.description : '';
+  const random = id === 'random';
+  $('mapCodeRow').classList.toggle('hidden', !random);
+  $('codeEntry').classList.toggle('hidden', !random);
+  $('mapCode').textContent = r.ok.code || '';
+  renderPreview();
+  return true;
+}
+
+function regionAdjacency(b) {
+  const adj = b.regionNames.map(() => b.regionNames.map(() => false));
+  for (const e of b.edges) {
+    const ra = b.cities[e.a].region;
+    const rb = b.cities[e.b].region;
+    adj[ra][rb] = adj[rb][ra] = true;
+  }
+  return adj;
+}
+
+// regionProblem mirrors engine.CheckRegions so the Start button can explain
+// what is wrong; the engine checks again when the game starts.
+function regionProblem() {
+  const n = Number($('count').value);
+  const want = REGIONS_FOR[n];
+  const chosen = [...setupMap.chosen];
+  if (chosen.length !== want) return 'Pick ' + want + ' regions for ' + n + ' players (' + chosen.length + ' picked).';
+  const adj = regionAdjacency(setupMap.board);
+  const seen = new Set([chosen[0]]);
+  const stack = [chosen[0]];
+  while (stack.length) {
+    const r = stack.pop();
+    for (const q of chosen) if (adj[r][q] && !seen.has(q)) { seen.add(q); stack.push(q); }
+  }
+  if (seen.size !== want) return 'The regions you pick must touch each other.';
+  const cities = setupMap.board.cities.filter((c) => setupMap.chosen.has(c.region)).length;
+  if (cities < END_AT[n]) return 'Those regions have ' + cities + ' cities; the game needs ' + END_AT[n] + '.';
+  return '';
+}
+
+function choosing() { return $('regionMode').value === 'choose'; }
+
+function toggleRegion(r) {
+  if (!choosing()) return;
+  if (setupMap.chosen.has(r)) setupMap.chosen.delete(r); else setupMap.chosen.add(r);
+  renderPreview();
+}
+
+function renderPreview() {
+  const b = setupMap.board;
+  if (!b) return;
+  const svg = $('preview');
+  clear(svg);
+  svg.setAttribute('viewBox', '0 0 ' + b.width + ' ' + b.height);
+  const pick = choosing();
+  b.regionNames.forEach((name, r) => {
+    const on = !pick || setupMap.chosen.has(r);
+    const g = s('g', { class: 'pv-region' + (on ? '' : ' off'), 'data-region': r });
+    const pts = b.cities.filter((c) => c.region === r);
+    for (const c of pts) g.append(s('circle', { cx: c.x, cy: c.y, r: 66, fill: REGION_TINT[r] }));
+    svg.append(g);
+  });
+  for (const e of b.edges) {
+    const a = b.cities[e.a];
+    const c = b.cities[e.b];
+    svg.append(s('line', { class: 'pv-road', x1: a.x, y1: a.y, x2: c.x, y2: c.y }));
+  }
+  for (const c of b.cities) svg.append(s('circle', { class: 'pv-city', cx: c.x, cy: c.y, r: 11, 'data-region': c.region }));
+  b.regionNames.forEach((name, r) => {
+    const pts = b.cities.filter((c) => c.region === r);
+    const cx = pts.reduce((a, c) => a + c.x, 0) / pts.length;
+    const cy = pts.reduce((a, c) => a + c.y, 0) / pts.length;
+    svg.append(s('text', { class: 'pv-name', x: cx, y: cy + 8, 'text-anchor': 'middle', 'data-region': r }, name));
+  });
+  const chips = $('regionChips');
+  clear(chips);
+  if (pick) {
+    b.regionNames.forEach((name, r) => {
+      const cities = b.cities.filter((c) => c.region === r).length;
+      const chip = h('button', { class: 'chip-btn' + (setupMap.chosen.has(r) ? ' on' : ''), type: 'button', 'aria-pressed': setupMap.chosen.has(r) ? 'true' : 'false', onclick: () => toggleRegion(r) },
+        h('span', { class: 'dot', 'data-tint': r }), ' ' + name + ' · ' + cities + ' cities');
+      chips.append(chip);
+    });
+    for (const d of chips.querySelectorAll('[data-tint]')) d.style.background = REGION_TINT[Number(d.dataset.tint)];
+  }
+  const problem = pick ? regionProblem() : '';
+  $('regionHint').textContent = pick ? (problem || 'Ready: tap a region to change it.') : 'Regions are picked at random when the game starts.';
+  $('regionHint').classList.toggle('warn', !!problem);
+  $('start').disabled = !!problem;
 }
 
 function defaultSeats() {
@@ -176,8 +286,16 @@ async function startGame() {
   seats.forEach((st, i) => { all[i] = st; });
   prefs.seats = all;
   prefs.count = seats.length;
+  prefs.map = $('mapSel').value;
+  prefs.regionMode = $('regionMode').value;
   storeJSON(PREFS_KEY, prefs);
-  const r = await call('newGame', JSON.stringify({ players: seats }));
+  const b = setupMap.board;
+  const cfg = {
+    players: seats,
+    map: { id: b.id, seed: b.seed || 0 },
+    regions: choosing() ? [...setupMap.chosen] : [],
+  };
+  const r = await call('newGame', JSON.stringify(cfg));
   if (r.error) { toast(r.error); return; }
   lastHuman = -1;
   enterGame(r.ok);
@@ -197,9 +315,13 @@ async function resumeGame() {
   enterGame(r.ok);
 }
 
-function enterGame(v) {
+async function enterGame(v) {
+  const b = await call('board');
+  if (b.error) { toast(b.error); showSetup(); return; }
+  board = b.ok;
+  buildMap();
   screen('game');
-  ui = { tab: 'map', pick: null, bid: 0, city: null };
+  ui = { tab: 'map', pick: null, bid: 0, city: null, fire: null, hcoal: 0 };
   setTab('map');
   view = null;
   update(v);
@@ -224,6 +346,8 @@ async function update(v) {
   const prev = view;
   view = v;
   ui.pick = null;
+  ui.fire = null; // power phase: null means "start from the suggestion"
+  ui.cart = null; // fuel order not yet confirmed
   ui.city = null;
   render();
   persist();
@@ -316,6 +440,47 @@ function showRoundSummary(round) {
     h('button', { class: 'btn primary wide', type: 'button', onclick: () => { gate = false; closeDialog(); schedule(); } }, 'Next round'));
 }
 
+const STEP_INFO = [
+  'Each city holds 1 house. 8 plants show in the market; the lowest 4 are for sale.',
+  'Each city holds 2 houses. The lowest plant leaves the market when step 2 begins.',
+  'Each city holds 3 houses. The market shrinks to 6 plants and all of them are for sale.',
+];
+
+function stepTriggers() {
+  return [
+    'Starts the game.',
+    'Starts when someone has ' + view.step2At + ' cities after building.',
+    'Starts when the Step 3 card is drawn from the plant deck.',
+  ];
+}
+
+function restockTable() {
+  const g = game();
+  return h('table', { class: 'summary restock' },
+    h('thead', {}, h('tr', {}, h('th', { text: 'Restock / round' }), RES.map((r) => h('th', { text: r.icon })))),
+    h('tbody', {}, view.restock.map((row, i) => h('tr', { class: i + 1 === g.step ? 'current' : '' },
+      h('td', { text: 'Step ' + (i + 1) + (i + 1 === g.step ? ' (now)' : '') }),
+      row.map((n) => h('td', { text: '+' + n }))))));
+}
+
+function stepCard() {
+  const g = game();
+  const trig = stepTriggers();
+  return h('div', { class: 'card step-card' },
+    h('div', { class: 'steps' }, [1, 2, 3].map((n) => h('div', { class: 'step' + (n === g.step ? ' now' : n < g.step ? ' done' : '') },
+      h('strong', { text: 'Step ' + n + (n === g.step ? ' · now' : '') }),
+      h('span', { class: 'small', text: STEP_INFO[n - 1] }),
+      h('span', { class: 'small muted', text: trig[n - 1] })))),
+    g.step3Pending ? h('p', { class: 'warn', text: 'The Step 3 card has been drawn: step 3 starts at the end of this phase.' }) : null,
+    restockTable(),
+    h('p', { class: 'muted small', text: 'Restock is limited by what is left in the bank. The game ends when someone reaches ' + view.endAt + ' cities.' }));
+}
+
+function showStepInfo() {
+  openDialog(h('h2', { text: 'Step ' + game().step + ' of 3' }), stepCard(),
+    h('button', { class: 'btn primary wide', type: 'button', onclick: closeDialog }, 'Close'));
+}
+
 function stepNote() {
   const g = game();
   const notes = ['Step ' + g.step + '.'];
@@ -346,6 +511,7 @@ function showMenu() {
     Object.keys(SPEEDS).map((k) => h('option', { value: k, selected: prefs.speed === k }, k[0].toUpperCase() + k.slice(1))));
   openDialog(
     h('h2', { text: 'Menu' }),
+    h('p', { class: 'muted small', text: 'Map: ' + board.name + (board.code ? ' · code ' + board.code : '') }),
     h('label', { class: 'row' }, 'Bot speed', speedSel),
     h('button', { class: 'btn wide', type: 'button', onclick: showHelp }, 'How to play'),
     h('button', { class: 'btn wide danger', type: 'button', onclick: () => {
@@ -363,7 +529,7 @@ function showHelp() {
     ['2. Auction plants', 'In turn, pick a plant from the top row of the market and bid at least its number. Others raise or pass. Each player buys at most one plant per round (everyone must buy in round 1). You may own ' + (view ? view.maxPlants : 3) + ' plants.'],
     ['3. Buy fuel', 'Last player first. Each plant stores twice what it burns. Prices rise as the market empties.'],
     ['4. Build', 'Last player first. Your first house costs $10. After that you pay the house plus the cheapest road from your network. In step 1 each city holds one house, step 2 two, step 3 three.'],
-    ['5. Get paid', 'Plants burn fuel to power your cities. More powered cities = more money.'],
+    ['5. Power & get paid', 'Pick which plants to run (or none, to save fuel). Each powered city earns money; you can never power more cities than you own.'],
     ['Winning', 'When someone reaches the end city count, the player who powers the most cities that round wins.'],
   ];
   const back = view ? showMenu : closeDialog;
@@ -393,13 +559,14 @@ function render() {
   renderPanel();
 }
 
-const PHASE_NAMES = { auction: 'Auction', resources: 'Buy fuel', build: 'Build', over: 'Game over' };
+const PHASE_NAMES = { auction: 'Auction', resources: 'Buy fuel', build: 'Build', power: 'Power', over: 'Game over' };
 function renderStatus() {
   const g = game();
   const st = $('status');
   clear(st);
   append(st, [
-    h('strong', { text: 'Round ' + g.round }), ' · Step ' + g.step + ' · ' + PHASE_NAMES[g.phase],
+    h('strong', { text: 'Round ' + g.round }), ' · ' + PHASE_NAMES[g.phase] + ' ',
+    h('button', { class: 'step-pill', type: 'button', onclick: showStepInfo, 'aria-label': 'About step ' + g.step }, 'Step ' + g.step + '/3 ⓘ'),
   ]);
 }
 
@@ -448,7 +615,8 @@ function renderMarket() {
   box.append(h('p', { class: 'muted small', text: 'Deck: ' + g.deckSize + ' cards left.' + (g.step3Pending ? ' Step 3 is coming!' : '') }));
   box.append(h('h3', { text: 'Fuel market' }));
   RES.forEach((r, k) => box.append(resourceTrack(k)));
-  box.append(stepNote());
+  box.append(h('h3', { text: 'Game step' }));
+  box.append(stepCard());
 }
 
 function resourceTrack(k) {
@@ -467,7 +635,7 @@ function resourceTrack(k) {
     }
   }
   return h('div', { class: 'track' },
-    h('div', { class: 'track-head' }, RES[k].icon + ' ' + RES[k].name, h('span', { class: 'muted', text: ' ' + avail + ' left, next $' + (view.prices[k] || '—') + ' · bank ' + g.supply[k] })),
+    h('div', { class: 'track-head' }, RES[k].icon + ' ' + RES[k].name, h('span', { class: 'muted', text: ' ' + avail + ' left, next $' + (view.prices[k] || '—') + ' · restocks +' + view.restock[g.step - 1][k] + '/round · bank ' + g.supply[k] })),
     h('div', { class: 'cells' }, cells));
 }
 
@@ -511,6 +679,7 @@ function renderPanel() {
     else panelChoose(panel, p);
   } else if (g.phase === 'resources') panelResources(panel, p);
   else if (g.phase === 'build') panelBuild(panel, p);
+  else if (g.phase === 'power') panelPower(panel, p);
 }
 
 function stepper(min, max, value, onchange) {
@@ -604,26 +773,127 @@ function roomFor(p, k) {
   return n;
 }
 
+// unitPrice mirrors engine.UnitPrice: the cheapest unit when avail are left.
+const URANIUM_PRICES = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16];
+function unitPrice(k, avail) {
+  if (avail <= 0) return 0;
+  if (k === 3) return URANIUM_PRICES[12 - avail];
+  return Math.floor((24 - avail) / 3) + 1;
+}
+function cartCost(k, n) {
+  let cost = 0;
+  let avail = game().resMarket[k];
+  for (let i = 0; i < n; i++) cost += unitPrice(k, avail--);
+  return cost;
+}
+
+// The fuel order is only a plan until confirmed; Reset empties it. The
+// engine buys the whole order at once (or nothing) when it is confirmed.
 function panelResources(panel, p) {
   const g = game();
-  panel.append(h('p', { class: 'hint', text: 'Buy fuel for your plants. Each plant holds twice what it burns.' }));
+  if (!ui.cart) ui.cart = [0, 0, 0, 0];
+  const cart = ui.cart;
+  const total = cart.reduce((sum, n, k) => sum + cartCost(k, n), 0);
+  const store = storage(p.plants);
+  const after = p.res.map((v, k) => v + cart[k]);
+  panel.append(h('p', { class: 'hint', text: 'Add fuel to your order, then confirm. Each plant holds twice what it burns.' }));
   const list = h('div', { class: 'res-list' });
   RES.forEach((r, k) => {
-    const room = roomFor(p, k);
-    if (room === 0 && p.res[k] === 0) return;
-    const price = view.prices[k];
-    const avail = g.resMarket[k];
-    const canBuy = room > 0 && avail > 0 && price <= p.money;
-    list.append(h('div', { class: 'res-row' },
+    const more = after.slice();
+    more[k]++;
+    const fitsMore = fits(store, more);
+    if (!fitsMore && p.res[k] === 0 && cart[k] === 0) return;
+    const avail = g.resMarket[k] - cart[k];
+    const next = unitPrice(k, avail);
+    const canAdd = fitsMore && avail > 0 && total + next <= p.money;
+    list.append(h('div', { class: 'res-row cart-row' },
       h('span', { class: 'res-name', text: r.icon + ' ' + r.name }),
-      h('span', { class: 'muted small', text: 'have ' + p.res[k] + ', room ' + room }),
-      h('button', { class: 'btn primary', type: 'button', disabled: !canBuy, onclick: () => act({ type: 'buy', resource: k, amount: 1 }) },
-        avail ? 'Buy 1 · $' + price : 'Sold out')));
+      h('span', { class: 'muted small', text: 'have ' + p.res[k] + (cart[k] ? ' +' + cart[k] : '') + ' · ' + g.resMarket[k] + ' in market · restocks +' + view.restock[g.step - 1][k] }),
+      h('div', { class: 'cart-ctl' },
+        h('button', { class: 'btn icon', type: 'button', 'aria-label': 'Remove one ' + r.name, disabled: cart[k] === 0, onclick: () => { cart[k]--; renderPanel(); } }, '−'),
+        h('span', { class: 'cart-n', text: String(cart[k]) }),
+        h('button', { class: 'btn icon primary', type: 'button', 'aria-label': 'Add one ' + r.name, disabled: !canAdd, onclick: () => { cart[k]++; renderPanel(); } },
+          avail > 0 ? '+ $' + next : '—'))));
   });
   if (!list.children.length) list.append(h('p', { class: 'muted', text: 'Your plants need no fuel.' }));
   panel.append(list);
-  panel.append(h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => act({ type: 'done' }) }, 'Done buying')));
+  const items = RES.map((r, k) => (cart[k] ? r.icon + cart[k] : '')).filter(Boolean).join(' ');
+  panel.append(h('p', { class: 'small' }, h('strong', { text: 'Order: ' + (items || 'nothing') + ' · $' + total }),
+    h('span', { class: 'muted', text: ' (you have $' + p.money + ')' })));
+  panel.append(h('div', { class: 'actions' },
+    h('button', { class: 'btn', type: 'button', disabled: total === 0, onclick: () => { ui.cart = [0, 0, 0, 0]; renderPanel(); } }, 'Reset'),
+    h('button', { class: 'btn primary', type: 'button', onclick: () => act({ type: 'buyAll', amounts: cart.slice() }) },
+      total ? 'Confirm · $' + total : 'Finish without buying')));
   panel.append(ownPlants(p));
+}
+
+// Income for powering n cities (mirrors engine.Payment).
+const PAYMENT = [10, 22, 33, 44, 54, 64, 73, 82, 90, 98, 105, 112, 118, 124, 129, 134, 138, 142, 145, 148, 150];
+const income = (n) => PAYMENT[Math.max(0, Math.min(n, PAYMENT.length - 1))];
+
+// planPower mirrors engine.PlanPowering for live feedback; the engine
+// re-checks the choice when it is sent.
+function planPower(p, fire, hybridCoal) {
+  const need = [0, 0, 0, 0];
+  let hybrid = 0;
+  let cap = 0;
+  for (const n of fire) {
+    const pl = plants[n];
+    cap += pl.cities;
+    if (pl.kind === 4) hybrid += pl.input;
+    else if (pl.kind < 4) need[pl.kind] += pl.input;
+  }
+  const hc = Math.max(0, Math.min(hybridCoal, hybrid));
+  need[0] += hc;
+  need[1] += hybrid - hc;
+  const short = RES.filter((_, k) => need[k] > p.res[k]).map((r) => r.name.toLowerCase());
+  return { need, hybrid, hc, cap, powered: Math.min(cap, p.cities.length), short };
+}
+
+function panelPower(panel, p) {
+  const sug = view.suggest || { fired: [], hybridCoal: 0 };
+  if (ui.fire === null) {
+    ui.fire = new Set(sug.fired);
+    ui.hcoal = sug.hybridCoal;
+  }
+  panel.append(h('p', { class: 'hint', text: 'Choose which plants to run. Fuel you don\'t burn stays for next round.' }));
+  if (!p.plants.length) {
+    panel.append(h('p', { class: 'muted', text: 'You have no plants to run.' }));
+  }
+  panel.append(h('div', { class: 'plants' }, p.plants.map((n) => plantCard(n, {
+    selected: ui.fire.has(n),
+    onclick: () => {
+      if (ui.fire.has(n)) ui.fire.delete(n); else ui.fire.add(n);
+      renderPanel();
+    },
+  }))));
+  const plan = planPower(p, [...ui.fire], ui.hcoal);
+  ui.hcoal = plan.hc;
+  if (plan.hybrid > 0) {
+    const label = h('span', { class: 'amount small-amount', text: plan.hc + ' 🪨 + ' + (plan.hybrid - plan.hc) + ' 🛢️' });
+    panel.append(h('div', { class: 'stepper' },
+      h('span', { class: 'muted small', text: 'Hybrid fuel' }),
+      h('button', { class: 'btn icon', type: 'button', 'aria-label': 'Less coal', disabled: plan.hc === 0, onclick: () => { ui.hcoal--; renderPanel(); } }, '−🪨'),
+      label,
+      h('button', { class: 'btn icon', type: 'button', 'aria-label': 'More coal', disabled: plan.hc === plan.hybrid, onclick: () => { ui.hcoal++; renderPanel(); } }, '+🪨')));
+  }
+  const used = RES.map((r, k) => (plan.need[k] ? r.icon + plan.need[k] : '')).filter(Boolean).join(' ');
+  const have = RES.map((r, k) => (p.res[k] ? r.icon + p.res[k] : '')).filter(Boolean).join(' ') || 'none';
+  panel.append(h('p', { class: 'small' },
+    h('strong', { text: 'Powers ' + plan.powered + ' of your ' + p.cities.length + ' cities → $' + income(plan.powered) }),
+    h('br'),
+    h('span', { class: 'muted', text: 'Burns: ' + (used || 'nothing') + ' · You have: ' + have })));
+  if (plan.short.length) panel.append(h('p', { class: 'warn', text: 'Not enough ' + plan.short.join(' and ') + ' for that choice.' }));
+  else if (!p.cities.length && ui.fire.size) panel.append(h('p', { class: 'warn', text: 'You have no cities yet, so running plants only wastes fuel.' }));
+  else if (plan.cap > p.cities.length && ui.fire.size) panel.append(h('p', { class: 'warn', text: 'These plants can power ' + plan.cap + ' cities but you only have ' + p.cities.length + ': some fuel is wasted.' }));
+  panel.append(h('div', { class: 'actions' },
+    h('button', { class: 'btn', type: 'button', onclick: () => { ui.fire = new Set(sug.fired); ui.hcoal = sug.hybridCoal; renderPanel(); } }, 'Best'),
+    h('button', { class: 'btn', type: 'button', onclick: () => { ui.fire = new Set(); renderPanel(); } }, 'None')));
+  panel.append(h('div', { class: 'actions' },
+    h('button', {
+      class: 'btn primary', type: 'button', disabled: plan.short.length > 0,
+      onclick: () => act({ type: 'power', fire: [...ui.fire], hybridCoal: plan.hc }),
+    }, ui.fire.size ? 'Run ' + ui.fire.size + ' plant' + (ui.fire.size > 1 ? 's' : '') + ' · earn $' + income(plan.powered) : 'Run nothing · earn $' + income(0))));
 }
 
 function panelBuild(panel, p) {
@@ -661,6 +931,8 @@ const vb = { x: 0, y: 0, w: 640, h: 940 };
 function buildMap() {
   const svg = $('map');
   clear(svg);
+  mapRefs.cities = [];
+  mapRefs.regions = [];
   const regionLayer = s('g', { class: 'regions' });
   board.regionNames.forEach((name, r) => {
     const g = s('g', { class: 'region' });
@@ -699,7 +971,6 @@ function buildMap() {
     mapRefs.cities[i] = { g, slots, cost };
   });
   svg.append(cityLayer);
-  wireMapGestures(svg);
   setViewBox();
 }
 
@@ -853,6 +1124,18 @@ function wireUI() {
   $('zoomIn').addEventListener('click', () => { const c = center(); zoomAt(1 / 1.3, c.x, c.y); });
   $('zoomOut').addEventListener('click', () => { const c = center(); zoomAt(1.3, c.x, c.y); });
   $('zoomFit').addEventListener('click', fitMap);
+  wireMapGestures($('map'));
+  $('mapSel').addEventListener('change', () => loadPreview($('mapSel').value, ''));
+  $('newMap').addEventListener('click', () => loadPreview('random', ''));
+  $('useCode').addEventListener('click', async () => {
+    if (await loadPreview('random', $('codeInput').value.trim())) $('codeInput').value = '';
+  });
+  $('regionMode').addEventListener('change', () => { setupMap.chosen = new Set(); renderPreview(); });
+  $('count').addEventListener('change', renderPreview);
+  $('preview').addEventListener('click', (e) => {
+    const el = e.target.closest && e.target.closest('[data-region]');
+    if (el) toggleRegion(Number(el.dataset.region));
+  });
 }
 
 function mergeSeats() {
