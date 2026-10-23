@@ -419,46 +419,23 @@ func (b *bot) cheapestCities() []cityCost {
 	return out
 }
 
-// expansion is the cost of the two cheapest follow-up builds after adding
-// city to our network: a low value means room to grow.
-func (b *bot) expansion(city int) int {
-	g := b.g
-	bd := g.Board()
-	allowed := make([]bool, len(bd.Cities))
-	for c := range allowed {
-		allowed[c] = g.IsActive(c)
-	}
-	src := append(append([]int(nil), b.me.Cities...), city)
-	var next []int
-	for c, d := range bd.Distances(src, allowed) {
-		used := len(g.Owners[c])
-		if c == city || !allowed[c] || used >= g.Step || contains(g.Owners[c], b.p) {
-			continue
-		}
-		next = append(next, d+engine.SlotCost[used])
-	}
-	sort.Ints(next)
-	switch len(next) {
-	case 0:
-		return 100
-	case 1:
-		return next[0] * 2
-	}
-	return next[0] + next[1]
-}
+// roomWeight is how many dollars one unit of room is worth when choosing
+// where to build.
+const roomWeight = 8.0
 
-// pickCity chooses where to build: cheapest now, with weight on how
-// cheaply the network can keep growing from there.
-func (b *bot) pickCity(opts []cityCost, weight float64) cityCost {
-	if weight == 0 {
+// pickCity chooses where to build, trading cost now against room to grow:
+// a cheap city in a corner or behind an opponent's wall is often a trap.
+func (b *bot) pickCity(opts []cityCost) cityCost {
+	if len(opts) == 1 {
 		return opts[0]
 	}
+	r := b.newRoomer()
 	best, bestScore := opts[0], math.Inf(1)
 	for i, o := range opts {
-		if i >= 8 || o.cost > b.me.Money {
+		if i >= 10 || o.cost > b.me.Money || o.cost > opts[0].cost+25 {
 			break
 		}
-		s := float64(o.cost) + weight*float64(b.expansion(o.city))
+		s := float64(o.cost) - roomWeight*r.room(o.city)
 		if s < bestScore {
 			best, bestScore = o, s
 		}
@@ -512,9 +489,5 @@ func (b *bot) build() engine.Action {
 	if have >= target || opts[0].cost > b.me.Money-5 {
 		return done
 	}
-	w := 0.0
-	if have == 0 {
-		w = 0.5
-	}
-	return engine.Action{Type: engine.ActBuild, City: b.pickCity(opts, w).city}
+	return engine.Action{Type: engine.ActBuild, City: b.pickCity(opts).city}
 }

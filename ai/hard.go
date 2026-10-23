@@ -72,7 +72,7 @@ func (b *bot) hardBuild() engine.Action {
 		if len(opts) == 0 {
 			break
 		}
-		pick := sb.pickCity(opts, 0.3)
+		pick := sb.pickCity(opts)
 		if pick.cost > sb.me.Money {
 			break
 		}

@@ -468,3 +468,24 @@ func TestLoadRejectsBadRestock(t *testing.T) {
 		t.Error("save with bad restock accepted")
 	}
 }
+
+func TestRoadCostsMatchDijkstra(t *testing.T) {
+	for _, spec := range []MapSpec{{ID: "classic"}, {ID: "ridge"}, {ID: "random", Seed: 99}} {
+		g, err := NewGame(Config{Seed: 5, Map: spec, Players: []PlayerConfig{{}, {}, {}, {}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		roads := g.RoadCosts()
+		for a := range g.Board().Cities {
+			if !g.IsActive(a) {
+				continue
+			}
+			want := g.Board().Distances([]int{a}, g.active)
+			for c := range want {
+				if g.IsActive(c) && roads[a][c] != want[c] {
+					t.Fatalf("%s %d->%d: %d vs %d", spec.ID, a, c, roads[a][c], want[c])
+				}
+			}
+		}
+	}
+}
