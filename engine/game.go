@@ -101,6 +101,7 @@ type Game struct {
 	Quiet  bool `json:"-"`
 	board  *Board
 	active []bool
+	roads  [][]int // cached all-pairs road costs over cities in play
 }
 
 // Board is the map this game is played on.
@@ -375,6 +376,52 @@ func (g *Game) growRegions(k int) []int {
 	}
 	sort.Ints(picked)
 	return picked
+}
+
+// RoadCosts is the cheapest road cost between every pair of cities in
+// play (math.MaxInt when unreachable), travelling only through cities in
+// play. It is computed once per game and shared, so callers must not
+// modify it.
+func (g *Game) RoadCosts() [][]int {
+	if g.roads != nil {
+		return g.roads
+	}
+	if g.active == nil {
+		g.computeActive()
+	}
+	b := g.Board()
+	n := len(b.Cities)
+	d := make([][]int, n)
+	for i := range d {
+		d[i] = make([]int, n)
+		for j := range d[i] {
+			if i != j {
+				d[i][j] = math.MaxInt
+			}
+		}
+	}
+	for _, e := range b.Edges {
+		if g.active[e.A] && g.active[e.B] && e.Cost < d[e.A][e.B] {
+			d[e.A][e.B], d[e.B][e.A] = e.Cost, e.Cost
+		}
+	}
+	for k := 0; k < n; k++ {
+		if !g.active[k] {
+			continue
+		}
+		for i := 0; i < n; i++ {
+			if d[i][k] == math.MaxInt {
+				continue
+			}
+			for j := 0; j < n; j++ {
+				if d[k][j] != math.MaxInt && d[i][k]+d[k][j] < d[i][j] {
+					d[i][j] = d[i][k] + d[k][j]
+				}
+			}
+		}
+	}
+	g.roads = d
+	return d
 }
 
 func (g *Game) computeActive() {
