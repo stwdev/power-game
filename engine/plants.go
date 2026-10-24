@@ -219,13 +219,11 @@ type Powering struct {
 func PlanPowering(plants []int, res [NumResources]int, cities int, fire []int, hybridCoal int) (Powering, error) {
 	var need [NumResources]int
 	hybrid, capSum := 0, 0
-	seen := map[int]bool{}
-	fired := []int{}
+	fired := make([]int, 0, len(fire))
 	for _, n := range fire {
-		if seen[n] || !containsInt(plants, n) {
+		if containsInt(fired, n) || !containsInt(plants, n) {
 			return Powering{}, fmt.Errorf("you do not own plant %d", n)
 		}
-		seen[n] = true
 		p, _ := PlantByNum(n)
 		fired = append(fired, n)
 		capSum += p.Cities

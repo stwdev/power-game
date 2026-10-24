@@ -123,6 +123,11 @@ type bot struct {
 	me  *engine.Player
 	lvl engine.Level
 	rng engine.RNG
+
+	// Cached per decision (see cash.go).
+	cc       float64
+	base     float64
+	haveBase bool
 }
 
 func (b *bot) chance(pct int) bool { return b.rng.Intn(100) < pct }
@@ -237,29 +242,11 @@ func (b *bot) growth() int {
 	}
 }
 
-// plantValue is how much the bot gains from owning plant num.
-func (b *bot) plantValue(num int) float64 {
-	gain := b.setWorth(b.bestSet(num)) - b.setWorth(b.me.Plants)
-	have := capacity(b.me.Plants)
-	need := len(b.me.Cities) + b.growth()
-	if have >= need+2 {
-		gain *= 0.35
-	} else if have >= need {
-		gain *= 0.7
-	}
-	return gain
-}
-
 func (b *bot) maxBid(num int) int {
 	if b.lvl == engine.Easy {
 		return min(num+2, b.me.Money)
 	}
-	bid := num + int(math.Max(0, b.plantValue(num)*0.3))
-	reserve := 10
-	if b.g.Round == 1 {
-		reserve = 8
-	}
-	return min(bid, b.me.Money-reserve)
+	return b.cashMaxBid(num)
 }
 
 func (b *bot) affordablePlants() []int {
@@ -287,12 +274,12 @@ func (b *bot) choosePlant() engine.Action {
 	}
 	best, bestScore := -1, math.Inf(-1)
 	for _, n := range affordable {
-		s := b.plantValue(n) - float64(n)*0.3
+		s := b.plantGain(n, n)
 		if s > bestScore {
 			best, bestScore = n, s
 		}
 	}
-	if !mustBuy && (bestScore < 6 || b.maxBid(best) < best) {
+	if !mustBuy && bestScore < 3 {
 		return engine.Action{Type: engine.ActPass}
 	}
 	return engine.Action{Type: engine.ActChoose, Plant: best, Bid: best}
@@ -363,7 +350,7 @@ func (b *bot) fuelTarget(goal int) [engine.NumResources]int {
 }
 
 func (b *bot) buyResources() engine.Action {
-	goal := len(b.me.Cities) + b.growth()
+	goal := b.fuelGoal()
 	if b.lvl == engine.Easy {
 		if b.chance(10) {
 			return engine.Action{Type: engine.ActDone}
