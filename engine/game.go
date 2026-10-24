@@ -1034,7 +1034,16 @@ func (g *Game) BuildCosts(p int) []int {
 	}
 	var dist []int
 	if pl := &g.Players[p]; len(pl.Cities) > 0 {
-		dist = g.Board().Distances(pl.Cities, g.active)
+		// Cheapest road from any of our cities, from the cached table.
+		roads := g.RoadCosts()
+		dist = append([]int(nil), roads[pl.Cities[0]]...)
+		for _, c := range pl.Cities[1:] {
+			for x, d := range roads[c] {
+				if d < dist[x] {
+					dist[x] = d
+				}
+			}
+		}
 	}
 	for c := range out {
 		used := len(g.Owners[c])

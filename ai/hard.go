@@ -33,12 +33,20 @@ func (b *bot) hard() engine.Action {
 	return engine.Action{Type: engine.ActDone}
 }
 
+// hardChoose simulates passing and auctioning each plant worth its price.
+// Plants the cash budget says would starve us are not considered: the
+// simulations cannot see that cost well, because later bids in them are
+// made by the cheaper Medium logic.
 func (b *bot) hardChoose() engine.Action {
 	var cands [][]engine.Action
-	if b.g.CanPass() {
+	canPass := b.g.CanPass()
+	if canPass {
 		cands = append(cands, []engine.Action{{Type: engine.ActPass}})
 	}
 	for _, n := range b.affordablePlants() {
+		if canPass && b.plantGain(n, n) <= 0 {
+			continue
+		}
 		cands = append(cands, []engine.Action{{Type: engine.ActChoose, Plant: n, Bid: n}})
 	}
 	if len(cands) <= 1 {
@@ -47,9 +55,14 @@ func (b *bot) hardChoose() engine.Action {
 	return b.bestOf(cands)[0]
 }
 
+// hardBid decides whether to raise. Raising is only considered while the
+// plant is still worth the price on our cash budget: in the simulations
+// the rest of the auction is bid by Medium logic, which tends to drop out,
+// so they make one more raise look nearly free and would drive Hard into
+// bidding wars it cannot afford.
 func (b *bot) hardBid() engine.Action {
 	next := b.g.Auc.High + 1
-	if next > b.me.Money {
+	if next > b.me.Money || next > b.cashMaxBid(b.g.Auc.Plant) {
 		return engine.Action{Type: engine.ActPass}
 	}
 	cands := [][]engine.Action{
