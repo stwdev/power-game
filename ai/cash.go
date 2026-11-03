@@ -30,6 +30,10 @@ const (
 // worth once the end of the game is in sight.
 const endPowerValue = 25.0
 
+// finalCityValue is what one more powered city is worth in the last round,
+// in dollars: more than any amount of leftover cash.
+const finalCityValue = 100.0
+
 // cityCost estimates what each of our next few cities will cost. It is
 // worked out once per decision.
 func (b *bot) cityCost() float64 {
@@ -141,6 +145,14 @@ func (b *bot) plantGain(num, price int) float64 {
 // gainWith returns plantGain for a fixed new plant set as a function of
 // price, reusing the sorted fuel plan across prices.
 func (b *bot) gainWith(set []int) func(price int) float64 {
+	if b.lvl != engine.Easy && b.finalRound() {
+		// Last round: a plant is worth the extra cities it lets us power
+		// now. Price only matters through the cities it stops us building.
+		base := b.pushTarget()
+		return func(price int) float64 {
+			return finalCityValue*float64(b.pushTargetWith(set, b.me.Money-price)-base) - 0.05*float64(price)
+		}
+	}
 	if !b.haveBase {
 		b.base, b.haveBase = b.outlook(b.me.Plants, float64(b.me.Money)), true
 	}

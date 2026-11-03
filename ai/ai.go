@@ -124,10 +124,12 @@ type bot struct {
 	lvl engine.Level
 	rng engine.RNG
 
-	// Cached per decision (see cash.go).
+	// Cached per decision (see cash.go and endgame.go).
 	cc       float64
 	base     float64
 	haveBase bool
+	final    bool
+	endDone  bool
 }
 
 func (b *bot) chance(pct int) bool { return b.rng.Intn(100) < pct }
@@ -351,6 +353,9 @@ func (b *bot) fuelTarget(goal int) [engine.NumResources]int {
 
 func (b *bot) buyResources() engine.Action {
 	goal := b.fuelGoal()
+	if b.lvl != engine.Easy && b.finalRound() {
+		goal = b.pushTarget() // last round: fuel the biggest network we can afford
+	}
 	if b.lvl == engine.Easy {
 		if b.chance(10) {
 			return engine.Action{Type: engine.ActDone}
@@ -413,8 +418,8 @@ const roomWeight = 8.0
 // pickCity chooses where to build, trading cost now against room to grow:
 // a cheap city in a corner or behind an opponent's wall is often a trap.
 func (b *bot) pickCity(opts []cityCost) cityCost {
-	if len(opts) == 1 {
-		return opts[0]
+	if len(opts) == 1 || b.finalRound() {
+		return opts[0] // in the last round there is no future room to buy
 	}
 	r := b.newRoomer()
 	best, bestScore := opts[0], math.Inf(1)
@@ -448,7 +453,7 @@ func (b *bot) build() engine.Action {
 	have := len(b.me.Cities)
 	if b.lvl == engine.Easy {
 		limit := capacity(b.me.Plants)
-		if b.me.Money > 150 || b.g.Round > 18 {
+		if b.me.Money > 150 || b.g.Round > stallRound {
 			limit += 2
 		}
 		if have >= limit || b.chance(20) {
@@ -470,10 +475,19 @@ func (b *bot) build() engine.Action {
 	if b.me.Money-opts[0].cost > 40 {
 		target = max(target, capacity(b.me.Plants))
 	}
-	if b.g.Round > 18 {
+	if b.g.Round > stallRound {
 		target = 99 // the game has stalled: race to the finish
 	}
-	if have >= target || opts[0].cost > b.me.Money-5 {
+	reserve := 5
+	if b.finalRound() {
+		// Last round: cash only breaks ties, so build everything we can run.
+		target, reserve = max(target, b.usable()), 0
+		if b.winsByEnding() {
+			// We are ahead: build to the trigger and end the game now.
+			target = max(target, b.g.EndTrigger())
+		}
+	}
+	if have >= target || opts[0].cost > b.me.Money-reserve {
 		return done
 	}
 	return engine.Action{Type: engine.ActBuild, City: b.pickCity(opts).city}

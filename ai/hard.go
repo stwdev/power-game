@@ -79,7 +79,11 @@ func (b *bot) hardBuild() engine.Action {
 	sim := clone(b.g)
 	plans := [][]engine.Action{{done}}
 	var path []engine.Action
-	for k := 0; k < 4; k++ {
+	most := 4
+	if b.finalRound() {
+		most = 10 // a final push can be much bigger than a normal turn
+	}
+	for k := 0; k < most; k++ {
 		sb := newBot(sim, b.p, engine.Medium)
 		opts := sb.cheapestCities()
 		if len(opts) == 0 {
@@ -232,7 +236,10 @@ func (b *bot) score(sim *engine.Game) float64 {
 	}
 	s := 0.0
 	if mine > best {
-		s = 1
+		// A win that comes sooner is safer: every extra round gives the
+		// others time to catch up. This also stops Hard idling on a cash
+		// pile when it could end a game it is already winning.
+		s = 1 + 0.2/float64(1+sim.Round-b.g.Round)
 	}
 	margin := (mine - best) / 5000
 	return s + max(-0.3, min(0.3, margin))
