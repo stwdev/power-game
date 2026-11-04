@@ -22,6 +22,9 @@ game, with its own original map (six fictional regions, 42 cities) and art.
     whether to raise a bid, how many cities to build) it simulates the rest
     of the game many times and picks the move that wins most often. In
     testing it wins about 85–90% of games against Easy + Medium.
+  - Medium and Hard both watch for the last round: when anyone could end
+    the game, they turn their cash into a final push of fuel and cities,
+    and they end the game themselves when they are ahead.
 - **Written in Go with zero third-party dependencies.** The UI is
   plain HTML/CSS/JS with no frameworks. See [SECURITY.md](SECURITY.md).
 - **Online play with friends** is planned; the engine is built for it.

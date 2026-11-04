@@ -701,6 +701,7 @@ function showHelp() {
         'Easy plays loosely and makes mistakes.',
         'Medium values plants by income against fuel cost and grows to match its plants.',
         'Hard plays out the rest of the game many times before each key decision and picks what wins most often.',
+        'Medium and Hard watch for the last round: when anyone can end the game, they spend their cash on a final push, and they end it themselves when they are ahead.',
         'Bots only use information you can see too; they never peek at the deck.',
         'Bot speed in the menu only changes how fast bots move, not how well they play.',
       ])),
